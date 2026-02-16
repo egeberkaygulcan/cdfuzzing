@@ -26,7 +26,7 @@ ENV RANLIB /usr/bin/ranlib
 ARG USER_ID=1000
 ARG GROUP_ID=1000
 RUN mkdir -p /home && \
-	groupadd -g ${GROUP_ID} magma && \
+	(groupadd -g ${GROUP_ID} magma 2>/dev/null || groupadd magma) && \
 	useradd -l -u ${USER_ID} -K UMASK=0000 -d /home -g magma magma && \
 	chown magma:magma /home
 RUN	echo "magma:amgam" | chpasswd && usermod -a -G sudo magma
@@ -76,7 +76,7 @@ ARG ISAN_FLAG=${isan:+-DMAGMA_FATAL_CANARIES}
 ARG HARDEN_FLAG=${harden:+-DMAGMA_HARDEN_CANARIES}
 ARG CANARIES_FLAG=${canaries:+-DMAGMA_ENABLE_CANARIES}
 ARG FIXES_FLAG=${fixes:+-DMAGMA_ENABLE_FIXES}
-ARG BUILD_FLAGS="-include ${MAGMA}/src/canary.h ${CANARIES_FLAG} ${FIXES_FLAG} ${ISAN_FLAG} ${HARDEN_FLAG} -g -O0"
+ARG BUILD_FLAGS="${CANARIES_FLAG} ${FIXES_FLAG} ${ISAN_FLAG} ${HARDEN_FLAG} -g -O0"
 
 ENV CFLAGS ${BUILD_FLAGS}
 ENV CXXFLAGS ${BUILD_FLAGS}

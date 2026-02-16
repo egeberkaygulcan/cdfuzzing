@@ -25,7 +25,14 @@ source "$MAGMA/tools/captain/common.sh"
 
 if [ -z "$WORKER_POOL" ]; then
     WORKER_MODE=${WORKER_MODE:-1}
-    WORKERS_ALL=($(lscpu -b -p | sed '/^#/d' | sort -u -t, -k ${WORKER_MODE}g | cut -d, -f1))
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS: use sysctl to get CPU count
+        CPU_COUNT=$(sysctl -n hw.ncpu)
+        WORKERS_ALL=($(seq 0 $((CPU_COUNT - 1))))
+    else
+        # Linux: use lscpu
+        WORKERS_ALL=($(lscpu -b -p | sed '/^#/d' | sort -u -t, -k ${WORKER_MODE}g | cut -d, -f1))
+    fi
     WORKERS=${WORKERS:-${#WORKERS_ALL[@]}}
     export WORKER_POOL="${WORKERS_ALL[@]:0:WORKERS}"
 fi
@@ -201,7 +208,7 @@ allocate_workers()
 export -f allocate_workers
 
 # set up a RAM-backed fs for fast processing of canaries and crashes
-if [ -z $CACHE_ON_DISK ]; then
+if [ -z $CACHE_ON_DISK ] && [[ "$OSTYPE" != "darwin"* ]]; then
     echo_time "Obtaining sudo permissions to mount tmpfs"
     if mountpoint -q -- "$CACHEDIR"; then
         sudo umount -f "$CACHEDIR"
@@ -221,12 +228,14 @@ cleanup()
     done
 
     find "$LOCKDIR" -type f | while read lock; do
-        if inotifywait -qq -e delete_self "$lock" &> /dev/null; then
-            continue
+        if [[ "$OSTYPE" != "darwin"* ]]; then
+            if inotifywait -qq -e delete_self "$lock" &> /dev/null; then
+                continue
+            fi
         fi
     done
 
-    if [ -z $CACHE_ON_DISK ]; then
+    if [ -z $CACHE_ON_DISK ] && [[ "$OSTYPE" != "darwin"* ]]; then
         echo_time "Obtaining sudo permissions to umount tmpfs"
         sudo umount "$CACHEDIR"
     fi
