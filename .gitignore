@@ -210,3 +210,6 @@ __marimo__/
 figures/
 .DS_Store
 magma-1.2.zip
+
+# MAGMA AFL drift detection - ignore fetched AFL repo
+magma/fuzzers/aflcd/repo/
