@@ -84,7 +84,7 @@ struct drift_detector* drift_init(void) {
   dd->drift_threshold = env_val ? atof(env_val) : 0.05;  /* Default: 0.05 */
   
   env_val = getenv("AFL_DRIFT_RESET");
-  dd->reset_on_drift = env_val ? atoi(env_val) : 0;  /* Default: disabled */
+  dd->reset_on_drift = 1; // env_val ? atoi(env_val) : 0;  /* Default: disabled */
   
   /* Jerk tracking parameters (from MeanJerkFuzzer) */
   env_val = getenv("AFL_METRICS_WINDOW");
@@ -97,7 +97,7 @@ struct drift_detector* drift_init(void) {
   dd->mean_jerk_window = env_val ? atoi(env_val) : 100;  /* Default: 100 */
   
   env_val = getenv("AFL_STOP_ON_JERK_DRIFT");
-  dd->stop_on_jerk_drift = env_val ? atoi(env_val) : 0;  /* Default: disabled */
+  dd->stop_on_jerk_drift = 0; //env_val ? atoi(env_val) : 0;  /* Default: disabled */
   
   /* Allocate history buffers (auto-expand as needed) */
   dd->history_capacity = 20000;

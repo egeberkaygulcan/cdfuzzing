@@ -291,6 +291,9 @@ static u64 first_corpus_reset_iteration = 0;      /* First corpus reset iteratio
 static u64 first_corpus_reset_time = 0;           /* First corpus reset time (ms) */
 static u64 last_corpus_reset_iteration = 0;       /* Last corpus reset iteration */
 static u64 last_corpus_reset_time = 0;            /* Last corpus reset time (ms) */
+static FILE*  drift_csv_file = NULL;               /* CSV log file handle */
+static u64    drift_csv_last_update = 0;           /* Last CSV write time (ms) */
+static u32    drift_csv_minute = 0;                /* Minute counter */
 #endif
 
 struct extra_data {
@@ -963,6 +966,56 @@ static void perform_corpus_reset(void) {
   /* Mark that we need to recalculate favored paths */
   score_changed = 1;
 
+}
+
+/* Open drift CSV and write header + initial row. */
+
+static void drift_csv_init(void) {
+
+  u8* fn = alloc_printf("%s/drift_log.csv", out_dir);
+
+  drift_csv_file = fopen(fn, "w");
+  if (!drift_csv_file) PFATAL("Unable to create '%s'", fn);
+  ck_free(fn);
+
+  fprintf(drift_csv_file, "timestamp,iterations,coverage,reset_flag,early_stop_flag\n");
+  fprintf(drift_csv_file, "0,0,0,false,false\n");
+  fflush(drift_csv_file);
+
+  drift_csv_last_update = get_cur_time();
+  drift_csv_minute = 0;
+
+}
+
+/* Append a row if >=1 minute has elapsed since last write. */
+
+static void drift_csv_update(u64 current_iter, u32 current_coverage) {
+
+  if (!drift_csv_file) return;
+
+  u64 now = get_cur_time();
+  if (now - drift_csv_last_update < 60000) return;  /* Not yet 1 minute */
+
+  drift_csv_minute++;
+  drift_csv_last_update = now;
+
+  fprintf(drift_csv_file, "%u,%llu,%u,%s,%s\n",
+          drift_csv_minute,
+          current_iter,
+          current_coverage,
+          corpus_reset_count > 0 ? "true" : "false",
+          jerk_drift_detected ? "true" : "false");
+  fflush(drift_csv_file);
+
+}
+
+/* Close the CSV file. */
+
+static void drift_csv_close(void) {
+  if (drift_csv_file) {
+    fclose(drift_csv_file);
+    drift_csv_file = NULL;
+  }
 }
 
 #endif /* AFL_DRIFT_DETECT */
@@ -8197,6 +8250,7 @@ int main(int argc, char** argv) {
   if (!drift_det) FATAL("Failed to initialize drift detector");
   ACTF("Drift detection initialized (window=%u, threshold=%.3f)",
        drift_det->window_size, drift_det->drift_threshold);
+  drift_csv_init();
 #endif
 
   /* Woop woop woop */
@@ -8305,6 +8359,8 @@ int main(int argc, char** argv) {
           ACTF("Continuing fuzzing with jerk drift detection disabled...");
         }
       }
+
+      drift_csv_update(drift_iteration, current_coverage);
     }
 #endif
 
@@ -8401,6 +8457,7 @@ stop_fuzzing:
   ck_free(sync_id);
 
 #ifdef AFL_DRIFT_DETECT
+  drift_csv_close();
   if (drift_det) {
     drift_destroy(drift_det);
     drift_det = NULL;

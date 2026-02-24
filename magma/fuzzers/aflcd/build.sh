@@ -12,7 +12,7 @@ if [ ! -d "$FUZZER/repo" ]; then
 fi
 
 cd "$FUZZER/repo"
-CC=clang make -j $(nproc)
+CC=clang AFL_DRIFT_DETECT=1 make -j $(nproc)
 CC=clang make -j $(nproc) -C llvm_mode
 
 # compile afl_driver.cpp
