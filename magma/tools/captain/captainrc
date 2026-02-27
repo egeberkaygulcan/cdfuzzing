@@ -76,21 +76,21 @@ FUZZERS=(afl aflcd aflfast aflfastcd aflplusplus aflpluspluscd fairfuzz fairfuzz
 # [fuzzer_TARGETS]: an array of target names (from magma/targets/*) to fuzz with
 # `fuzzer`. The `fuzzer` prefix is a fuzzer listed in the FUZZERS array
 # (default: all targets)
-TARGETS=(libpng)
-# afl_TARGETS=(libpng)
-# aflcd_TARGETS=(libpng)
-# aflfast_TARGETS=(libpng)
-# aflfastcd_TARGETS=(libpng)
-# aflplusplus_TARGETS=(libpng)
-# aflpluspluscd_TARGETS=(libpng)
-# fairfuzz_TARGETS=(libpng)
-# fairfuzzcd_TARGETS=(libpng)
-# honggfuzz_TARGETS=(libpng)
-# honggfuzzcd_TARGETS=(libpng)
-# moptafl_TARGETS=(libpng)
-# moptaflcd_TARGETS=(libpng)
-# symcc_afl_TARGETS=(libpng)
-# symcc_aflcd_TARGETS=(libpng)
+<!-- TARGETS=(libpng) -->
+afl_TARGETS=(libpng)
+aflcd_TARGETS=(libpng)
+aflfast_TARGETS=(libpng)
+aflfastcd_TARGETS=(libpng)
+aflplusplus_TARGETS=(libpng)
+aflpluspluscd_TARGETS=(libpng)
+fairfuzz_TARGETS=(libpng)
+fairfuzzcd_TARGETS=(libpng)
+honggfuzz_TARGETS=(libpng)
+honggfuzzcd_TARGETS=(libpng)
+moptafl_TARGETS=(libpng)
+moptaflcd_TARGETS=(libpng)
+symcc_afl_TARGETS=(libpng)
+symcc_aflcd_TARGETS=(libpng)
 
 # [fuzzer_target_PROGRAMS]: an array of program names (from
 # magma/targets/target/configrc) to use as execution drivers when fuzzing the
