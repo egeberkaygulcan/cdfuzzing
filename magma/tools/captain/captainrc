@@ -30,7 +30,7 @@ REPEAT=1
 # [TIMEOUT]: time to run each campaign. This variable supports one-letter
 # suffixes to indicate duration (s: seconds, m: minutes, h: hours, d: days)
 # (default: 1m)
-TIMEOUT=10m
+TIMEOUT=6h
 
 # [POLL]: time (in seconds) between polls (default: 5)
 POLL=5
@@ -71,13 +71,26 @@ POLL=5
 ###
 
 # FUZZERS: an array of fuzzer names (from magma/fuzzers/*) to evaluate
-FUZZERS=(afl aflcd)
+FUZZERS=(afl aflcd aflfast aflfastcd aflplusplus aflpluspluscd fairfuzz fairfuzzcd honggfuzz honggfuzzcd moptafl moptaflcd symcc_afl symcc_aflcd)
 
 # [fuzzer_TARGETS]: an array of target names (from magma/targets/*) to fuzz with
 # `fuzzer`. The `fuzzer` prefix is a fuzzer listed in the FUZZERS array
 # (default: all targets)
-afl_TARGETS=(libpng)
-aflcd_TARGETS=(libpng)
+TARGETS=(libpng)
+# afl_TARGETS=(libpng)
+# aflcd_TARGETS=(libpng)
+# aflfast_TARGETS=(libpng)
+# aflfastcd_TARGETS=(libpng)
+# aflplusplus_TARGETS=(libpng)
+# aflpluspluscd_TARGETS=(libpng)
+# fairfuzz_TARGETS=(libpng)
+# fairfuzzcd_TARGETS=(libpng)
+# honggfuzz_TARGETS=(libpng)
+# honggfuzzcd_TARGETS=(libpng)
+# moptafl_TARGETS=(libpng)
+# moptaflcd_TARGETS=(libpng)
+# symcc_afl_TARGETS=(libpng)
+# symcc_aflcd_TARGETS=(libpng)
 
 # [fuzzer_target_PROGRAMS]: an array of program names (from
 # magma/targets/target/configrc) to use as execution drivers when fuzzing the

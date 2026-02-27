@@ -10,6 +10,9 @@ git clone --no-checkout https://github.com/google/AFL.git "$FUZZER/afl"
 git -C "$FUZZER/afl" checkout 61037103ae3722c8060ff7082994836a794f978e
 cp "$FUZZER/src/afl_driver.cpp" "$FUZZER/afl/afl_driver.cpp"
 
+# Copy seed support modifications
+cp "$FUZZER/newsrc/afl-fuzz.c" "$FUZZER/afl/afl-fuzz.c"
+
 git clone --no-checkout https://github.com/eurecom-s3/symcc.git "$FUZZER/symcc"
 git -C "$FUZZER/symcc" checkout 82151a62e3b702a2c699ca4d8ef91d3bf9beeb2b
 

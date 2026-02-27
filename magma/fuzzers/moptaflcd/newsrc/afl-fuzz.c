@@ -282,6 +282,7 @@ static u64 stage_finds[32],           /* Patterns found per fuzz stage    */
            stage_cycles[32];          /* Execs per fuzz stage             */
 
 static u32 rand_cnt;                  /* Random number counter            */
+static u8  fixed_seed;                /* Whether FUZZER_SEED was set      */
 
 static u64 total_cal_us,              /* Total calibration time (us)      */
            total_cal_cycles;          /* Total calibration cycles         */
@@ -415,7 +416,11 @@ int select_algorithm(int extras) {
 
     u32 seed[2];
 
-    ck_read(dev_urandom_fd, &seed, sizeof(seed), "/dev/urandom");
+    if (fixed_seed) {
+      seed[0] = (u32)random();
+    } else {
+      ck_read(dev_urandom_fd, &seed, sizeof(seed), "/dev/urandom");
+    }
 
     srandom(seed[0]);
 
@@ -490,7 +495,12 @@ static inline u32 UR(u32 limit) {
 
     u32 seed[2];
 
-    ck_read(dev_urandom_fd, &seed, sizeof(seed), "/dev/urandom");
+    if (fixed_seed) {
+      seed[0] = (u32)random();
+      seed[1] = (u32)random();
+    } else {
+      ck_read(dev_urandom_fd, &seed, sizeof(seed), "/dev/urandom");
+    }
 
     srandom(seed[0]);
     rand_cnt = (RESEED_RNG / 2) + (seed[1] % RESEED_RNG);
@@ -11907,8 +11917,14 @@ int main(int argc, char** argv) {
 
   doc_path = access(DOC_PATH, F_OK) ? "docs" : DOC_PATH;
 
-  gettimeofday(&tv, &tz);
-  srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
+  char *fuzzer_seed_env = getenv("FUZZER_SEED");
+  if (fuzzer_seed_env) {
+    srandom(strtoul(fuzzer_seed_env, NULL, 10));
+    fixed_seed = 1;
+  } else {
+    gettimeofday(&tv, &tz);
+    srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
+  }
 
 
   {    //default L
@@ -12321,7 +12337,7 @@ break;
 
 
 
-    srandom(time(NULL));
+    srandom(fixed_seed ? (u32)random() : time(NULL));
 
 
 

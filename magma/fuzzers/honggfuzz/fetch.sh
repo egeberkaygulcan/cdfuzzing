@@ -24,3 +24,6 @@ patch -p1 -d "$FUZZER/repo" << EOF
  
  static struct {
 EOF
+
+# Copy seed support modifications
+cp "$FUZZER/newsrc/util.c" "$FUZZER/repo/libhfcommon/util.c"

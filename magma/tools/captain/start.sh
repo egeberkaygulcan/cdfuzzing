@@ -56,6 +56,7 @@ if [ -t 1 ]; then
         --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
         --env=PROGRAM="$PROGRAM" --env=ARGS="$ARGS" \
         --env=FUZZARGS="$FUZZARGS" --env=POLL="$POLL" --env=TIMEOUT="$TIMEOUT" \
+        --env=FUZZER_SEED="$FUZZER_SEED" \
         $flag_aff $flag_ep "$IMG_NAME"
 else
     container_id=$(
@@ -63,6 +64,7 @@ else
         --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
         --env=PROGRAM="$PROGRAM" --env=ARGS="$ARGS" \
         --env=FUZZARGS="$FUZZARGS" --env=POLL="$POLL" --env=TIMEOUT="$TIMEOUT" \
+        --env=FUZZER_SEED="$FUZZER_SEED" \
         --network=none \
         $flag_aff $flag_ep "$IMG_NAME"
     )

@@ -32,10 +32,6 @@
 #include "alloc-inl.h"
 #include "hash.h"
 
-#ifdef AFL_DRIFT_DETECT
-#include "afl-drift-detect.h"
-#endif
-
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -111,15 +107,6 @@ enum {
   /* 04 */ QUAD,                      /* Quadratic schedule               */
   /* 05 */ EXPLOIT                    /* AFL's exploitation-based const.  */
 };
-
-#ifdef AFL_DRIFT_DETECT
-static struct drift_detector *drift_det = NULL;
-static u64  drift_iteration      = 0;
-static u32  jerk_drift_detected   = 0;
-static u32  corpus_reset_performed = 0;
-static FILE *drift_csv_fp          = NULL;
-static u64  drift_csv_last_time    = 0;
-#endif
 
 EXP_ST u8  skip_deterministic,        /* Skip deterministic stages?       */
            force_deterministic,       /* Force deterministic stages?      */
@@ -855,98 +842,6 @@ EXP_ST void destroy_queue(void) {
   }
 
 }
-
-
-#ifdef AFL_DRIFT_DETECT
-
-/* Reset corpus: remove queue entries beyond initial inputs. */
-static void perform_corpus_reset(void) {
-
-  struct queue_entry *q = queue, *prev = NULL;
-  u32 idx = 0;
-
-  while (q) {
-
-    if (idx >= queued_at_start) {
-
-      struct queue_entry *next = q->next;
-
-      if (q->fname) {
-        unlink(q->fname);
-        ck_free(q->fname);
-      }
-      ck_free(q->trace_mini);
-      ck_free(q);
-
-      if (prev) prev->next = next;
-      q = next;
-      queued_paths--;
-      continue;
-
-    }
-
-    prev = q;
-    q = q->next;
-    idx++;
-
-  }
-
-  queue_top     = prev;
-  queue_cur     = queue;
-  current_entry = 0;
-  score_changed = 1;
-
-  SAYF(cGRN "[+] " cRST "Corpus reset: kept %u initial inputs\n",
-       queued_at_start);
-
-}
-
-/* Initialize drift CSV log file. */
-static void drift_csv_init(void) {
-
-  u8 *fname = alloc_printf("%s/drift_log.csv", out_dir);
-  drift_csv_fp = fopen((char *)fname, "w");
-
-  if (drift_csv_fp) {
-    fprintf(drift_csv_fp,
-            "timestamp,iterations,coverage,reset_flag,early_stop_flag\n");
-    fflush(drift_csv_fp);
-  }
-
-  ck_free(fname);
-  drift_csv_last_time = get_cur_time() / 1000;
-
-}
-
-/* Update drift CSV log (every 60 seconds). */
-static void drift_csv_update(u64 iteration, u32 coverage,
-                             u8 reset_flag, u8 early_stop_flag) {
-
-  if (!drift_csv_fp) return;
-
-  u64 now = get_cur_time() / 1000;
-  if (now - drift_csv_last_time < 60) return;
-
-  drift_csv_last_time = now;
-  fprintf(drift_csv_fp, "%llu,%llu,%u,%u,%u\n",
-          (unsigned long long)(now - start_time / 1000),
-          (unsigned long long)iteration, coverage,
-          (u32)reset_flag, (u32)early_stop_flag);
-  fflush(drift_csv_fp);
-
-}
-
-/* Close drift CSV log. */
-static void drift_csv_close(void) {
-
-  if (drift_csv_fp) {
-    fclose(drift_csv_fp);
-    drift_csv_fp = NULL;
-  }
-
-}
-
-#endif /* AFL_DRIFT_DETECT */
 
 
 /* Write bitmap to file. The bitmap is useful mostly for the secret
@@ -8232,11 +8127,6 @@ int main(int argc, char** argv) {
 
   if (stop_soon) goto stop_fuzzing;
 
-#ifdef AFL_DRIFT_DETECT
-  drift_det = drift_init();
-  drift_csv_init();
-#endif
-
   /* Woop woop woop */
 
   if (!not_on_tty) {
@@ -8289,33 +8179,6 @@ int main(int argc, char** argv) {
 
     skipped_fuzz = fuzz_one(use_argv);
 
-#ifdef AFL_DRIFT_DETECT
-    if (drift_det) {
-
-      drift_iteration++;
-      u32 coverage = count_non_255_bytes(virgin_bits);
-
-      drift_update(drift_det, drift_iteration, queued_paths, coverage);
-      drift_calculate_jerk(drift_det, drift_iteration);
-      drift_record_mean_jerk(drift_det);
-
-      u8 do_reset = drift_check_value(drift_det, drift_iteration);
-      if (do_reset) {
-        perform_corpus_reset();
-        corpus_reset_performed = 1;
-      } else {
-        corpus_reset_performed = 0;
-      }
-
-      u8 did_jerk_drift = drift_check_jerk(drift_det, drift_iteration);
-      jerk_drift_detected = did_jerk_drift ? 1 : 0;
-
-      drift_csv_update(drift_iteration, coverage,
-                       corpus_reset_performed, jerk_drift_detected);
-
-    }
-#endif
-
     if (!stop_soon && sync_id && !skipped_fuzz) {
       
       if (!(sync_interval_cnt++ % SYNC_INTERVAL))
@@ -8340,16 +8203,6 @@ int main(int argc, char** argv) {
 
 stop_fuzzing:
 
-#ifdef AFL_DRIFT_DETECT
-  if (drift_det) {
-    SAYF(cGRN "\n[+] " cRST "Drift stats: value_drifts=%u resets=%u "
-         "jerk_drifts=%u iterations=%llu\n",
-         drift_det->drift_count, drift_det->reset_count,
-         drift_det->jerk_drift_count,
-         (unsigned long long)drift_iteration);
-  }
-#endif
-
   SAYF(CURSOR_SHOW cLRD "\n\n+++ Testing aborted %s +++\n" cRST,
        stop_soon == 2 ? "programmatically" : "by user");
 
@@ -8368,12 +8221,6 @@ stop_fuzzing:
   destroy_extras();
   ck_free(target_path);
   ck_free(sync_id);
-
-#ifdef AFL_DRIFT_DETECT
-  drift_csv_close();
-  drift_destroy(drift_det);
-  drift_det = NULL;
-#endif
 
   alloc_report();
 

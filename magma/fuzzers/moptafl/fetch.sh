@@ -12,3 +12,6 @@ mv "$FUZZER/repo/MOpt"/* "$FUZZER/repo"
 #wget -O "$FUZZER/repo/afl_driver.cpp" \
 #    "https://cs.chromium.org/codesearch/f/chromium/src/third_party/libFuzzer/src/afl/afl_driver.cpp"
 cp "$FUZZER/src/afl_driver.cpp" "$FUZZER/repo/afl_driver.cpp"
+
+# Copy seed support modifications
+cp "$FUZZER/newsrc/afl-fuzz.c" "$FUZZER/repo/afl-fuzz.c"
