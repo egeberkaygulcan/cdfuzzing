@@ -12,6 +12,7 @@ if [ ! -d "$FUZZER/repo" ]; then
 fi
 
 cd "$FUZZER/repo"
+make clean || true
 CC=clang AFL_DRIFT_DETECT=1 make -j $(nproc)
 CC=clang make -j $(nproc) -C llvm_mode
 

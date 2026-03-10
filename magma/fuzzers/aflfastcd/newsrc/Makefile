@@ -57,10 +57,10 @@ ifdef AFL_DRIFT_DETECT
   COMM_HDR += afl-drift-detect.h
 endif
 
+all: test_x86 $(PROGS) afl-as test_build all_done
+
 afl-drift-detect.o: afl-drift-detect.c afl-drift-detect.h $(COMM_HDR)
 	$(CC) $(CFLAGS) -c $< -o $@
-
-all: test_x86 $(PROGS) afl-as test_build all_done
 
 ifndef AFL_NO_X86
 

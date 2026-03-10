@@ -15,7 +15,8 @@ fi
 # build AFL
 (
     cd "$FUZZER/afl"
-    CC=clang make -j $(nproc)
+    make clean || true
+    CC=clang AFL_DRIFT_DETECT=1 make -j $(nproc)
     CC=clang make -j $(nproc) -C llvm_mode
 )
 

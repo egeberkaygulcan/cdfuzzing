@@ -883,6 +883,9 @@ EXP_ST void destroy_queue(void) {
 }
 
 
+/* Forward declaration for use in perform_corpus_reset */
+static u8 delete_files(u8* path, u8* prefix);
+
 #ifdef AFL_DRIFT_DETECT
 
 /* Reset corpus to initial seeds only. Called when drift is detected
@@ -949,11 +952,42 @@ static void perform_corpus_reset(void) {
   queue_cur = queue;
   current_entry = 0;
   
+  /* Clear .state/ directories to avoid "File exists" errors when new
+     entries reuse IDs from deleted entries */
+  {
+    u8* fn;
+    fn = alloc_printf("%s/queue/.state/redundant_edges", out_dir);
+    delete_files(fn, "id:");
+    mkdir(fn, 0700);
+    ck_free(fn);
+    fn = alloc_printf("%s/queue/.state/deterministic_done", out_dir);
+    delete_files(fn, "id:");
+    mkdir(fn, 0700);
+    ck_free(fn);
+    fn = alloc_printf("%s/queue/.state/variable_behavior", out_dir);
+    delete_files(fn, "id:");
+    mkdir(fn, 0700);
+    ck_free(fn);
+  }
+
+  /* Clear top_rated[] to avoid dangling pointers to freed entries */
+  memset(top_rated, 0, sizeof(top_rated));
+
+  /* Reset tc_ref and fs_redundant on surviving entries */
+  q = queue;
+  while (q) {
+    q->tc_ref = 0;
+    q->fs_redundant = 0;
+    q = q->next;
+  }
+
   /* Update q_prev100 - reset to queue start */
   q_prev100 = queue;
   
   /* Reset some cycle tracking to start fresh iteration */
   cur_skipped_paths = 0;
+  queued_favored = 0;
+  pending_favored = 0;
   
   /* Track reset event */
   corpus_reset_count++;

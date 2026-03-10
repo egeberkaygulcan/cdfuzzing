@@ -3,7 +3,7 @@ set -e
 
 apt-get update && \
     apt-get install -y make build-essential clang-9 git wget subversion \
-        ninja-build python-pip zlib1g-dev rustc cargo inotify-tools
+        ninja-build python3-pip zlib1g-dev rustc cargo inotify-tools
 
 # Installl CMake from Kitware apt repository
 wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | \
@@ -14,7 +14,7 @@ echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://ap
 apt-get update && \
     apt-get install -y cmake
 
-pip install lit
+pip3 install lit
 
 update-alternatives \
   --install /usr/lib/llvm              llvm             /usr/lib/llvm-9  20 \

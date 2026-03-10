@@ -1184,6 +1184,9 @@ EXP_ST void destroy_queue(void) {
 }
 
 
+/* Forward declaration for use in perform_corpus_reset */
+static u8 delete_files(u8* path, u8* prefix);
+
 #ifdef AFL_DRIFT_DETECT
 
 /* Reset corpus: remove queue entries beyond initial inputs. */
@@ -1222,7 +1225,52 @@ static void perform_corpus_reset(void) {
   queue_top     = prev;
   queue_cur     = queue;
   current_entry = 0;
+
+  /* Clear .state/ directories to avoid "File exists" errors when new
+     entries reuse IDs from deleted entries */
+  {
+    u8* fn;
+    fn = alloc_printf("%s/queue/.state/redundant_edges", out_dir);
+    delete_files(fn, "id:");
+    mkdir(fn, 0700);
+    ck_free(fn);
+    fn = alloc_printf("%s/queue/.state/deterministic_done", out_dir);
+    delete_files(fn, "id:");
+    mkdir(fn, 0700);
+    ck_free(fn);
+    fn = alloc_printf("%s/queue/.state/variable_behavior", out_dir);
+    delete_files(fn, "id:");
+    mkdir(fn, 0700);
+    ck_free(fn);
+  }
+
+  /* Clear top_rated[] to avoid dangling pointers to freed entries */
+  memset(top_rated, 0, sizeof(top_rated));
+
+  /* Reset tc_ref and fs_redundant on surviving entries */
+  q = queue;
+  while (q) {
+    q->tc_ref = 0;
+    q->fs_redundant = 0;
+    q = q->next;
+  }
+
   score_changed = 1;
+
+  /* Reset queue statistics */
+  queued_discovered = 0;
+  cur_skipped_paths = 0;
+  queued_favored = 0;
+  pending_favored = 0;
+  q_prev100 = queue;
+
+  /* Recalculate pending_not_fuzzed */
+  pending_not_fuzzed = 0;
+  q = queue;
+  while (q) {
+    if (!q->was_fuzzed) pending_not_fuzzed++;
+    q = q->next;
+  }
 
   SAYF(cGRN "[+] " cRST "Corpus reset: kept %u initial inputs\n",
        queued_at_start);

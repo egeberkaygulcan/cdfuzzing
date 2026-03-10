@@ -10,7 +10,7 @@
 WORKDIR=./workdir
 
 # REPEAT: number of campaigns to run per program (per fuzzer)
-REPEAT=3
+REPEAT=1
 
 # [WORKER_MODE]: defines the type of CPU resources to allocate (default: 1)
 # - 1: logical cores (possibly SMT-enabled)
@@ -71,26 +71,26 @@ POLL=5
 ###
 
 # FUZZERS: an array of fuzzer names (from magma/fuzzers/*) to evaluate
-FUZZERS=(afl aflcd) #aflfast aflfastcd aflplusplus aflpluspluscd fairfuzz fairfuzzcd honggfuzz honggfuzzcd moptafl moptaflcd symcc_afl symcc_aflcd)
+FUZZERS=(afl aflcd aflfast aflfastcd aflplusplus aflpluspluscd fairfuzz fairfuzzcd honggfuzz honggfuzzcd moptafl moptaflcd)
 
 # [fuzzer_TARGETS]: an array of target names (from magma/targets/*) to fuzz with
 # `fuzzer`. The `fuzzer` prefix is a fuzzer listed in the FUZZERS array
 # (default: all targets)
-# <!-- TARGETS=(libpng) -->
-afl_TARGETS=(libpng)
-aflcd_TARGETS=(libpng)
-# aflfast_TARGETS=(libpng)
-# aflfastcd_TARGETS=(libpng)
-# aflplusplus_TARGETS=(libpng)
-# aflpluspluscd_TARGETS=(libpng)
-# fairfuzz_TARGETS=(libpng)
-# fairfuzzcd_TARGETS=(libpng)
-# honggfuzz_TARGETS=(libpng)
-# honggfuzzcd_TARGETS=(libpng)
-# moptafl_TARGETS=(libpng)
-# moptaflcd_TARGETS=(libpng)
-# symcc_afl_TARGETS=(libpng)
-# symcc_aflcd_TARGETS=(libpng)
+# Note: DEFAULT_TARGETS overrides TARGETS, so we must set per-fuzzer targets
+afl_TARGETS=(libpng openssl)
+aflcd_TARGETS=(libpng openssl)
+aflfast_TARGETS=(libpng openssl)
+aflfastcd_TARGETS=(libpng openssl)
+aflplusplus_TARGETS=(libpng openssl)
+aflpluspluscd_TARGETS=(libpng openssl)
+fairfuzz_TARGETS=(libpng openssl)
+fairfuzzcd_TARGETS=(libpng openssl)
+honggfuzz_TARGETS=(libpng openssl)
+honggfuzzcd_TARGETS=(libpng openssl)
+moptafl_TARGETS=(libpng openssl)
+moptaflcd_TARGETS=(libpng openssl)
+symcc_afl_TARGETS=(libpng openssl)
+symcc_aflcd_TARGETS=(libpng openssl)
 
 # [fuzzer_target_PROGRAMS]: an array of program names (from
 # magma/targets/target/configrc) to use as execution drivers when fuzzing the
