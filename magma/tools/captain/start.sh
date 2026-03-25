@@ -57,6 +57,14 @@ if [ -t 1 ]; then
         --env=PROGRAM="$PROGRAM" --env=ARGS="$ARGS" \
         --env=FUZZARGS="$FUZZARGS" --env=POLL="$POLL" --env=TIMEOUT="$TIMEOUT" \
         --env=FUZZER_SEED="$FUZZER_SEED" \
+        --env=AFL_DRIFT_WINDOW="$AFL_DRIFT_WINDOW" \
+        --env=AFL_DRIFT_THRESHOLD="$AFL_DRIFT_THRESHOLD" \
+        --env=AFL_DRIFT_ALWAYS_RESET="$AFL_DRIFT_ALWAYS_RESET" \
+        --env=AFL_DRIFT_SELECTIVE="$AFL_DRIFT_SELECTIVE" \
+        --env=AFL_DRIFT_SOFT_RESET="$AFL_DRIFT_SOFT_RESET" \
+        --env=AFL_DRIFT_MAX_RESETS="$AFL_DRIFT_MAX_RESETS" \
+        --env=AFL_DRIFT_HAVOC_BOOST="$AFL_DRIFT_HAVOC_BOOST" \
+        --env=AFL_DRIFT_BOOST_CYCLES="$AFL_DRIFT_BOOST_CYCLES" \
         $flag_aff $flag_ep "$IMG_NAME"
 else
     container_id=$(
@@ -65,6 +73,14 @@ else
         --env=PROGRAM="$PROGRAM" --env=ARGS="$ARGS" \
         --env=FUZZARGS="$FUZZARGS" --env=POLL="$POLL" --env=TIMEOUT="$TIMEOUT" \
         --env=FUZZER_SEED="$FUZZER_SEED" \
+        --env=AFL_DRIFT_WINDOW="$AFL_DRIFT_WINDOW" \
+        --env=AFL_DRIFT_THRESHOLD="$AFL_DRIFT_THRESHOLD" \
+        --env=AFL_DRIFT_ALWAYS_RESET="$AFL_DRIFT_ALWAYS_RESET" \
+        --env=AFL_DRIFT_SELECTIVE="$AFL_DRIFT_SELECTIVE" \
+        --env=AFL_DRIFT_SOFT_RESET="$AFL_DRIFT_SOFT_RESET" \
+        --env=AFL_DRIFT_MAX_RESETS="$AFL_DRIFT_MAX_RESETS" \
+        --env=AFL_DRIFT_HAVOC_BOOST="$AFL_DRIFT_HAVOC_BOOST" \
+        --env=AFL_DRIFT_BOOST_CYCLES="$AFL_DRIFT_BOOST_CYCLES" \
         --network=none \
         $flag_aff $flag_ep "$IMG_NAME"
     )

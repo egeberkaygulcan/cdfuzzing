@@ -215,6 +215,8 @@ magma-1.2.zip
 
 # MAGMA AFL drift detection - ignore fetched AFL repo
 magma/fuzzers/aflcd/repo/
+magma/fuzzers/aflfastcd/repo/
+magma/fuzzers/moptaflcd/repo/
 magma/tools/captain/workdir.zip
 # Campaign workdir (results, archives, logs)
 magma/tools/captain/workdir/
@@ -223,3 +225,21 @@ magma/tools/captain/workdir/
 magma/tools/captain/analysis/
 magma/tools/captain/analysis_*/
 magma/tools/captain/*.zip
+
+# Experiment data directories (large fuzzer output)
+magma/tools/captain/multi_experiment/
+magma/tools/captain/multi_experiment_v2/
+magma/tools/captain/multi_experiment_v3/
+magma/tools/captain/param_experiment/
+magma/tools/captain/selective_experiment/
+magma/tools/captain/window_experiment/
+
+# Experiment logs
+magma/tools/captain/*.log
+
+# Generated plots
+plots_v3/
+
+# Experiment summary docs (auto-generated)
+EXPERIMENT_SUMMARY.md
+magma/tools/captain/EXPERIMENT_SUMMARY.md

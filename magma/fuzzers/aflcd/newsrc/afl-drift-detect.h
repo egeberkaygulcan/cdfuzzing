@@ -15,6 +15,16 @@ struct drift_detector {
   u32    window_size;          /* Window for value drift (default: 100) */
   double drift_threshold;      /* P-value threshold (default: 0.05) */
   u8     reset_on_drift;       /* Reset corpus on VALUE drift only */
+  u8     always_reset;         /* Bypass coverage_rate_increasing guard */
+  u8     selective_reset;      /* Keep favored paths on reset (default: 0) */
+  u8     soft_reset;           /* No pruning, just re-run det on favored (default: 0) */
+  u32    max_resets;           /* Max corpus resets allowed (default: 0=unlimited) */
+  u32    cooldown;             /* Iterations to skip after reset (default: 0) */
+  u32    cooldown_remaining;   /* Remaining cooldown iterations */
+  double growth_ema;           /* Exponential moving avg of growth rates */
+  double ema_alpha;            /* EMA smoothing factor (default: 0.1) */
+  double stagnation_factor;    /* Trigger when growth < ema * factor (default: 0.25) */
+  u8     ema_initialized;      /* Whether EMA has been seeded */
   u32    metrics_window_size;  /* Window for derivative metrics (default: 100) */
   u32    jerk_window_size;     /* Window for jerk calculation (default: 1000) */
   u32    mean_jerk_window;     /* Record mean jerk interval (default: 100) */
@@ -46,6 +56,8 @@ struct drift_detector {
   /* Last known state */
   u64    last_queued_paths;
   u64    last_coverage;        /* For velocity calculation */
+  u32    consecutive_drifts;   /* Consecutive drift detections without reset */
+  u32    consecutive_required; /* Consecutive drifts needed to trigger reset */
   
 };
 
@@ -57,6 +69,9 @@ struct drift_detector* drift_init(void);
 
 /* Cleanup drift detector */
 void drift_destroy(struct drift_detector* dd);
+
+/* Reset drift history buffers after corpus reset */
+void drift_reset_history(struct drift_detector* dd);
 
 /* Update history after each iteration */
 void drift_update(struct drift_detector* dd, u64 current_iter, 

@@ -86,6 +86,36 @@ struct drift_detector* drift_init(void) {
   env_val = getenv("AFL_DRIFT_RESET");
   dd->reset_on_drift = 1; // env_val ? atoi(env_val) : 0;  /* Default: disabled */
   
+  env_val = getenv("AFL_DRIFT_ALWAYS_RESET");
+  dd->always_reset = env_val ? atoi(env_val) : 0;  /* Default: 0 (use guard) */
+  
+  env_val = getenv("AFL_DRIFT_SELECTIVE");
+  dd->selective_reset = env_val ? atoi(env_val) : 0;  /* Default: 0 (full reset) */
+  
+  env_val = getenv("AFL_DRIFT_SOFT_RESET");
+  dd->soft_reset = env_val ? atoi(env_val) : 0;  /* Default: 0 */
+  
+  env_val = getenv("AFL_DRIFT_MAX_RESETS");
+  dd->max_resets = env_val ? atoi(env_val) : 0;  /* Default: 0 (unlimited) */
+  
+  env_val = getenv("AFL_DRIFT_COOLDOWN");
+  dd->cooldown = env_val ? atoi(env_val) : 0;  /* Default: 0 (no cooldown) */
+  dd->cooldown_remaining = 0;
+  
+  env_val = getenv("AFL_DRIFT_CONSECUTIVE");
+  dd->consecutive_required = env_val ? atoi(env_val) : 1;  /* Default: 1 (first detection triggers) */
+  dd->consecutive_drifts = 0;
+  
+  /* Adaptive stagnation parameters */
+  env_val = getenv("AFL_DRIFT_EMA_ALPHA");
+  dd->ema_alpha = env_val ? atof(env_val) : 0.1;  /* Default: 0.1 */
+  
+  env_val = getenv("AFL_DRIFT_STAGNATION_FACTOR");
+  dd->stagnation_factor = env_val ? atof(env_val) : 0.25;  /* Default: 0.25 */
+  
+  dd->growth_ema = 0.0;
+  dd->ema_initialized = 0;
+  
   /* Jerk tracking parameters (from MeanJerkFuzzer) */
   env_val = getenv("AFL_METRICS_WINDOW");
   dd->metrics_window_size = env_val ? atoi(env_val) : 100;  /* Default: 100 */
@@ -126,11 +156,26 @@ struct drift_detector* drift_init(void) {
   SAYF(cGRN "[+] " cRST "Drift detection with jerk tracking enabled:\n");
   SAYF("    Value drift: window=%u, threshold=%.3f, reset=%s\n",
        dd->window_size, dd->drift_threshold, dd->reset_on_drift ? "ON" : "OFF");
+  SAYF("    Cooldown: %u iters, consecutive required: %u\n",
+       dd->cooldown, dd->consecutive_required);
+  SAYF("    Adaptive stagnation: ema_alpha=%.2f, stag_factor=%.2f\n",
+       dd->ema_alpha, dd->stagnation_factor);
   SAYF("    Jerk tracking: window=%u, mean_jerk_window=%u\n",
        dd->jerk_window_size, dd->mean_jerk_window);
   SAYF("    Early stop on jerk drift: %s\n", dd->stop_on_jerk_drift ? "YES" : "NO");
   
   return dd;
+}
+
+/* Reset drift history buffers (call after corpus reset to prevent false re-triggers) */
+void drift_reset_history(struct drift_detector* dd) {
+  if (!dd) return;
+  dd->history_len = 0;
+  dd->jerk_history_len = 0;
+  dd->mean_jerk_len = 0;
+  dd->consecutive_drifts = 0;
+  /* Activate cooldown period after reset */
+  dd->cooldown_remaining = dd->cooldown;
 }
 
 /* Cleanup drift detector */
@@ -265,13 +310,42 @@ u8 drift_check_value(struct drift_detector* dd, u64 current_iter) {
   
   if (!dd) return 0;
   
+  /* Cooldown: skip checks after a reset */
+  if (dd->cooldown_remaining > 0) {
+    dd->cooldown_remaining--;
+    return 0;
+  }
+  
   /* Need at least 2 windows of data */
   if (dd->history_len < dd->window_size * 2) return 0;
   
-  /* Get current and previous windows */
+  /* Adaptive stagnation check using EMA of growth rates.
+     Track the fuzzer's own historical growth rate and trigger when
+     recent growth drops significantly below its norm. */
+  u32 current_end = dd->history_len - 1;
   u32 current_start = dd->history_len - dd->window_size;
   u32 previous_start = current_start - dd->window_size;
   
+  u64 recent_growth = dd->value_history[current_end] - dd->value_history[current_start];
+  u64 previous_growth = dd->value_history[current_start] - dd->value_history[previous_start];
+  double growth_rate = (double)recent_growth;
+  
+  /* Update EMA of growth rates (persists across resets for baseline calibration) */
+  if (!dd->ema_initialized) {
+    dd->growth_ema = growth_rate;
+    dd->ema_initialized = 1;
+  } else {
+    dd->growth_ema = dd->ema_alpha * growth_rate + (1.0 - dd->ema_alpha) * dd->growth_ema;
+  }
+  
+  /* If coverage is growing above the adaptive threshold, no stagnation */
+  double stagnation_threshold = dd->growth_ema * dd->stagnation_factor;
+  if (growth_rate > stagnation_threshold && stagnation_threshold > 0.0) {
+    dd->consecutive_drifts = 0;
+    return 0;
+  }
+  
+  /* Get current and previous windows */
   /* Convert u64 to double for KS test */
   double* current_values = ck_alloc(dd->window_size * sizeof(double));
   double* previous_values = ck_alloc(dd->window_size * sizeof(double));
@@ -292,22 +366,36 @@ u8 drift_check_value(struct drift_detector* dd, u64 current_iter) {
   /* Detect drift if p-value is below threshold */
   if (p_value < dd->drift_threshold) {
     dd->drift_count++;
+    dd->consecutive_drifts++;
     
-    SAYF(cYEL "\n[!] " cRST "VALUE DRIFT detected at iter %llu | p-value: %.4f\n",
-         current_iter, p_value);
+    SAYF(cYEL "\n[!] " cRST "VALUE DRIFT detected at iter %llu | p-value: %.4f | consecutive: %u/%u\n",
+         current_iter, p_value, dd->consecutive_drifts, dd->consecutive_required);
+    SAYF("    Growth: recent=%llu prev=%llu ema=%.1f threshold=%.1f\n",
+         recent_growth, previous_growth, dd->growth_ema, stagnation_threshold);
     
-    /* Check if coverage rate is increasing */
-    u8 is_increasing = is_coverage_rate_increasing(dd);
-    SAYF("    Coverage rate increasing: %s\n", is_increasing ? "YES" : "NO");
-    
-    /* Decide on corpus reset (mirrors the reset logic) */
-    if (dd->reset_on_drift && !is_increasing) {
-      dd->reset_count++;
-      SAYF(cLRD "    CORPUS RESET" cRST " - Coverage rate not increasing\n");
-      return 1;  /* Signal reset needed */
-    } else if (dd->reset_on_drift && is_increasing) {
-      SAYF("    NO RESET - Coverage rate is increasing\n");
+    /* Require consecutive drift detections before acting */
+    if (dd->consecutive_drifts < dd->consecutive_required) {
+      SAYF("    WAITING - need %u more consecutive detections\n",
+           dd->consecutive_required - dd->consecutive_drifts);
+      return 0;
     }
+    
+    /* Decide on corpus reset */
+    if (dd->reset_on_drift) {
+      if (dd->max_resets > 0 && dd->reset_count >= dd->max_resets) {
+        SAYF("    NO RESET - Max resets reached (%u/%u)\n",
+             dd->reset_count, dd->max_resets);
+        return 0;
+      }
+      dd->reset_count++;
+      dd->consecutive_drifts = 0;
+      SAYF(cLRD "    CORPUS RESET #%u" cRST " - stagnation + drift confirmed\n",
+           dd->reset_count);
+      return 1;  /* Signal reset needed */
+    }
+  } else {
+    /* No drift — reset consecutive counter */
+    dd->consecutive_drifts = 0;
   }
   
   return 0;  /* No reset needed */

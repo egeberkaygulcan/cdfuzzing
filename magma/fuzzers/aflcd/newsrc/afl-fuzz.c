@@ -292,6 +292,9 @@ static u64 first_corpus_reset_iteration = 0;      /* First corpus reset iteratio
 static u64 first_corpus_reset_time = 0;           /* First corpus reset time (ms) */
 static u64 last_corpus_reset_iteration = 0;       /* Last corpus reset iteration */
 static u64 last_corpus_reset_time = 0;            /* Last corpus reset time (ms) */
+static u32 havoc_boost = 1;                        /* Post-reset havoc multiplier */
+static u32 havoc_boost_configured = 1;             /* Configured boost value */
+static u64 boost_until_cycle = 0;                  /* Cycle after which boost reverts to 1 */
 static FILE*  drift_csv_file = NULL;               /* CSV log file handle */
 static u64    drift_csv_last_update = 0;           /* Last CSV write time (ms) */
 static u32    drift_csv_minute = 0;                /* Minute counter */
@@ -885,75 +888,164 @@ EXP_ST void destroy_queue(void) {
 
 /* Forward declaration for use in perform_corpus_reset */
 static u8 delete_files(u8* path, u8* prefix);
+static void cull_queue(void);
 
 #ifdef AFL_DRIFT_DETECT
 
-/* Reset corpus to initial seeds only. Called when drift is detected
-   and coverage is not increasing. */
+/* Soft reset: no corpus pruning. Reset was_fuzzed on all entries.
+   Mode 1: also reset passed_det on favored → det re-run + boosted havoc.
+   Mode 2: havoc only → faster throughput, no expensive det stages. */
 
-static void perform_corpus_reset(void) {
+static void perform_soft_reset(void) {
 
-  struct queue_entry *q, *next;
-  u32 seed_count = 0;
-  u32 removed_count = 0;
-  
-  if (!queued_at_start) {
-    WARNF("No initial seeds to reset to!");
-    return;
+  struct queue_entry *q;
+  u8 soft_mode = drift_det->soft_reset;  /* 1=det+havoc, 2=havoc-only */
+
+  /* Force cull_queue to recompute favored set with current bitmap */
+  score_changed = 1;
+  cull_queue();
+
+  u32 favored_count = 0;
+
+  if (soft_mode == 1) {
+    ACTF("Soft reset (det+havoc): re-running det on favored entries (of %u total)...", queued_paths);
+
+    /* Clear deterministic_done files so det stages can re-run */
+    u8* fn = alloc_printf("%s/queue/.state/deterministic_done", out_dir);
+    delete_files(fn, "id:");
+    mkdir(fn, 0700);
+    ck_free(fn);
+  } else {
+    ACTF("Soft reset (havoc-only): fresh havoc pass on all %u entries...", queued_paths);
   }
 
-  ACTF("Resetting corpus to %u initial seeds...", queued_at_start);
-  
+  /* Reset fuzzing state */
   q = queue;
-  
-  /* Walk to the end of the seed entries */
-  while (q && seed_count < queued_at_start) {
-    seed_count++;
-    if (seed_count == queued_at_start) {
-      /* This is the last seed - it becomes the new queue_top */
-      queue_top = q;
-      next = q->next;
-      q->next = NULL;  /* Terminate the queue here */
-      q = next;
-      break;
+  while (q) {
+    q->was_fuzzed = 0;
+    if (q->favored) {
+      if (soft_mode == 1) q->passed_det = 0;
+      favored_count++;
     }
     q = q->next;
   }
-  
-  /* Now delete all generated entries after the seeds */
-  while (q) {
-    next = q->next;
-    
-    /* Delete the test case file from disk */
-    unlink(q->fname); /* Ignore errors */
-    
-    /* Free memory */
-    ck_free(q->fname);
-    ck_free(q->trace_mini);
-    ck_free(q);
-    
-    removed_count++;
-    q = next;
+
+  /* Recount pending */
+  pending_not_fuzzed = queued_paths;
+  pending_favored = favored_count;
+
+  /* Apply havoc boost from env */
+  {
+    char* boost_env = getenv("AFL_DRIFT_HAVOC_BOOST");
+    havoc_boost_configured = boost_env ? atoi(boost_env) : 1;
+    if (havoc_boost_configured < 1) havoc_boost_configured = 1;
+    havoc_boost = havoc_boost_configured;
   }
-  
-  /* Update queue statistics */
-  queued_paths = queued_at_start;
-  queued_discovered = 0;
-  
-  /* Recalculate pending_not_fuzzed by walking the remaining queue */
-  pending_not_fuzzed = 0;
-  q = queue;
-  while (q) {
-    if (!q->was_fuzzed) pending_not_fuzzed++;
-    q = q->next;
-  }
-  
-  /* Reset queue position to start */
+
+  /* Reset queue position and cycle */
   queue_cur = queue;
   current_entry = 0;
-  
-  /* Clear .state/ directories to avoid "File exists" errors when new
-     entries reuse IDs from deleted entries */
+  queue_cycle = 1;
+
+  /* Boost lasts for 1 cycle after reset; reverts when cycle 2 starts.
+     If boost_cycles env is 0, boost is permanent. */
+  {
+    char* bc_env = getenv("AFL_DRIFT_BOOST_CYCLES");
+    u32 boost_cycles = bc_env ? atoi(bc_env) : 1;
+    boost_until_cycle = boost_cycles ? (queue_cycle + boost_cycles) : 0;
+  }
+
+  use_splicing = 1;
+  cycles_wo_finds = 0;
+
+  /* Track reset */
+  corpus_reset_count++;
+  u64 reset_time = get_cur_time() - start_time;
+  if (corpus_reset_count == 1) {
+    first_corpus_reset_iteration = drift_iteration;
+    first_corpus_reset_time = reset_time;
+  }
+  last_corpus_reset_iteration = drift_iteration;
+  last_corpus_reset_time = reset_time;
+
+  ACTF("Soft reset #%u (mode=%u): %u total paths, %u favored, boost=%ux (until cycle %llu)",
+       corpus_reset_count, soft_mode, queued_paths, favored_count, havoc_boost,
+       boost_until_cycle);
+
+  /* Clear drift history so detector needs fresh data before re-triggering */
+  drift_reset_history(drift_det);
+
+  score_changed = 1;
+}
+
+/* Selective reset: keep favored (edge-covering) entries, remove redundant ones.
+   This preserves all discovered coverage while dramatically shrinking the queue. */
+
+static void perform_selective_reset(void) {
+
+  struct queue_entry *q, *next, *prev;
+  u32 kept_count = 0;
+  u32 removed_count = 0;
+
+  /* Force cull_queue to recompute favored set */
+  score_changed = 1;
+  cull_queue();
+
+  ACTF("Selective reset: keeping favored entries (of %u total)...", queued_paths);
+
+  /* Walk queue, remove non-favored non-seed entries */
+  prev = NULL;
+  q = queue;
+  u32 idx = 0;
+
+  while (q) {
+    next = q->next;
+    u8 is_seed = (idx < queued_at_start);
+
+    if (is_seed || q->favored) {
+      /* Keep this entry */
+      prev = q;
+      kept_count++;
+    } else {
+      /* Remove this entry */
+      if (prev) {
+        prev->next = next;
+      } else {
+        queue = next;
+      }
+
+      unlink(q->fname);
+      ck_free(q->fname);
+      ck_free(q->trace_mini);
+      ck_free(q);
+
+      removed_count++;
+      q = next;
+      idx++;
+      continue;
+    }
+
+    q = next;
+    idx++;
+  }
+
+  /* Update queue_top to last entry */
+  queue_top = prev;
+  if (queue_top) queue_top->next = NULL;
+
+  /* Clear ALL top_rated references to avoid dangling pointers */
+  memset(top_rated, 0, sizeof(top_rated));
+
+  /* Update statistics */
+  queued_paths = kept_count;
+  queued_discovered = (kept_count > queued_at_start) ?
+                      (kept_count - queued_at_start) : 0;
+
+  /* Reset queue position */
+  queue_cur = queue;
+  current_entry = 0;
+
+  /* Clear .state/ directories */
   {
     u8* fn;
     fn = alloc_printf("%s/queue/.state/redundant_edges", out_dir);
@@ -970,10 +1062,156 @@ static void perform_corpus_reset(void) {
     ck_free(fn);
   }
 
-  /* Clear top_rated[] to avoid dangling pointers to freed entries */
+  /* Reset scoring and fuzzing state on surviving entries */
+  q = queue;
+  while (q) {
+    q->tc_ref = 0;
+    q->fs_redundant = 0;
+    ck_free(q->trace_mini);
+    q->trace_mini = 0;
+    q->was_fuzzed = 0;
+    q->passed_det = 0;
+    q = q->next;
+  }
+
+  /* Recount pending_not_fuzzed since we just reset was_fuzzed */
+  pending_not_fuzzed = kept_count;
+
+  /* Rebuild next_100 skip-list chain */
+  {
+    u32 pos = 0;
+    q_prev100 = queue;
+    q = queue;
+    while (q) {
+      q->next_100 = NULL;
+      if (pos % 100 == 0 && pos > 0) {
+        q_prev100->next_100 = q;
+        q_prev100 = q;
+      }
+      pos++;
+      q = q->next;
+    }
+  }
+
+  cur_skipped_paths = 0;
+  queued_favored = 0;
+  pending_favored = 0;
+
+  /* Track reset */
+  corpus_reset_count++;
+  u64 reset_time = get_cur_time() - start_time;
+  if (corpus_reset_count == 1) {
+    first_corpus_reset_iteration = drift_iteration;
+    first_corpus_reset_time = reset_time;
+  }
+  last_corpus_reset_iteration = drift_iteration;
+  last_corpus_reset_time = reset_time;
+
+  /* Apply havoc boost from env */
+  {
+    char* boost_env = getenv("AFL_DRIFT_HAVOC_BOOST");
+    havoc_boost_configured = boost_env ? atoi(boost_env) : 1;
+    if (havoc_boost_configured < 1) havoc_boost_configured = 1;
+    havoc_boost = havoc_boost_configured;
+  }
+
+  /* Force re-enable splicing (useful if queue was small before) */
+  use_splicing = 1;
+  cycles_wo_finds = 0;
+
+  /* Reset queue_cycle so deterministic stages are not skipped by cycle>1 logic */
+  queue_cycle = 1;
+
+  /* Set boost decay */
+  {
+    char* bc_env = getenv("AFL_DRIFT_BOOST_CYCLES");
+    u32 boost_cycles = bc_env ? atoi(bc_env) : 1;
+    boost_until_cycle = boost_cycles ? (queue_cycle + boost_cycles) : 0;
+  }
+
+  ACTF("Selective reset #%u: removed %u redundant, kept %u (%u seeds + %u favored), boost=%ux",
+       corpus_reset_count, removed_count, kept_count,
+       queued_at_start, kept_count > queued_at_start ? kept_count - queued_at_start : 0,
+       havoc_boost);
+
+  /* Clear drift history so detector needs fresh data before re-triggering */
+  drift_reset_history(drift_det);
+
+  score_changed = 1;
+}
+
+/* Full reset: wipe corpus back to initial seeds only. */
+
+static void perform_full_reset(void) {
+
+  struct queue_entry *q, *next;
+  u32 seed_count = 0;
+  u32 removed_count = 0;
+  
+  if (!queued_at_start) {
+    WARNF("No initial seeds to reset to!");
+    return;
+  }
+
+  ACTF("Full reset: reverting to %u initial seeds...", queued_at_start);
+  
+  q = queue;
+  
+  /* Walk to the end of the seed entries */
+  while (q && seed_count < queued_at_start) {
+    seed_count++;
+    if (seed_count == queued_at_start) {
+      queue_top = q;
+      next = q->next;
+      q->next = NULL;
+      q = next;
+      break;
+    }
+    q = q->next;
+  }
+  
+  /* Delete all generated entries after the seeds */
+  while (q) {
+    next = q->next;
+    unlink(q->fname);
+    ck_free(q->fname);
+    ck_free(q->trace_mini);
+    ck_free(q);
+    removed_count++;
+    q = next;
+  }
+  
+  queued_paths = queued_at_start;
+  queued_discovered = 0;
+  
+  pending_not_fuzzed = 0;
+  q = queue;
+  while (q) {
+    if (!q->was_fuzzed) pending_not_fuzzed++;
+    q = q->next;
+  }
+  
+  queue_cur = queue;
+  current_entry = 0;
+  
+  {
+    u8* fn;
+    fn = alloc_printf("%s/queue/.state/redundant_edges", out_dir);
+    delete_files(fn, "id:");
+    mkdir(fn, 0700);
+    ck_free(fn);
+    fn = alloc_printf("%s/queue/.state/deterministic_done", out_dir);
+    delete_files(fn, "id:");
+    mkdir(fn, 0700);
+    ck_free(fn);
+    fn = alloc_printf("%s/queue/.state/variable_behavior", out_dir);
+    delete_files(fn, "id:");
+    mkdir(fn, 0700);
+    ck_free(fn);
+  }
+
   memset(top_rated, 0, sizeof(top_rated));
 
-  /* Reset tc_ref and fs_redundant on surviving entries */
   q = queue;
   while (q) {
     q->tc_ref = 0;
@@ -981,18 +1219,28 @@ static void perform_corpus_reset(void) {
     q = q->next;
   }
 
-  /* Update q_prev100 - reset to queue start */
-  q_prev100 = queue;
-  
-  /* Reset some cycle tracking to start fresh iteration */
+  /* Rebuild next_100 skip-list chain */
+  {
+    u32 pos = 0;
+    q_prev100 = queue;
+    q = queue;
+    while (q) {
+      q->next_100 = NULL;
+      if (pos % 100 == 0 && pos > 0) {
+        q_prev100->next_100 = q;
+        q_prev100 = q;
+      }
+      pos++;
+      q = q->next;
+    }
+  }
+
   cur_skipped_paths = 0;
   queued_favored = 0;
   pending_favored = 0;
   
-  /* Track reset event */
   corpus_reset_count++;
   u64 reset_time = get_cur_time() - start_time;
-  
   if (corpus_reset_count == 1) {
     first_corpus_reset_iteration = drift_iteration;
     first_corpus_reset_time = reset_time;
@@ -1000,12 +1248,22 @@ static void perform_corpus_reset(void) {
   last_corpus_reset_iteration = drift_iteration;
   last_corpus_reset_time = reset_time;
   
-  ACTF("Corpus reset #%u complete: removed %u entries, kept %u seeds",
+  ACTF("Full reset #%u: removed %u entries, kept %u seeds",
        corpus_reset_count, removed_count, queued_at_start);
   
-  /* Mark that we need to recalculate favored paths */
   score_changed = 1;
+}
 
+/* Dispatch to soft, selective, or full reset based on config. */
+
+static void perform_corpus_reset(void) {
+  if (drift_det && drift_det->soft_reset) {
+    perform_soft_reset();
+  } else if (drift_det && drift_det->selective_reset) {
+    perform_selective_reset();
+  } else {
+    perform_full_reset();
+  }
 }
 
 /* Open drift CSV and write header + initial row. */
@@ -1018,8 +1276,8 @@ static void drift_csv_init(void) {
   if (!drift_csv_file) PFATAL("Unable to create '%s'", fn);
   ck_free(fn);
 
-  fprintf(drift_csv_file, "timestamp,iterations,coverage,reset_flag,early_stop_flag\n");
-  fprintf(drift_csv_file, "0,0,0,false,false\n");
+  fprintf(drift_csv_file, "timestamp,iterations,coverage,total_resets,drift_count,cooldown_remaining\n");
+  fprintf(drift_csv_file, "0,0,0,0,0,0\n");
   fflush(drift_csv_file);
 
   drift_csv_last_update = get_cur_time();
@@ -1039,12 +1297,13 @@ static void drift_csv_update(u64 current_iter, u32 current_coverage) {
   drift_csv_minute++;
   drift_csv_last_update = now;
 
-  fprintf(drift_csv_file, "%u,%llu,%u,%s,%s\n",
+  fprintf(drift_csv_file, "%u,%llu,%u,%u,%u,%u\n",
           drift_csv_minute,
           current_iter,
           current_coverage,
-          corpus_reset_count > 0 ? "true" : "false",
-          jerk_drift_detected ? "true" : "false");
+          corpus_reset_count,
+          drift_det ? drift_det->drift_count : 0,
+          drift_det ? drift_det->cooldown_remaining : 0);
   fflush(drift_csv_file);
 
 }
@@ -6334,6 +6593,9 @@ havoc_stage:
     stage_short = "havoc";
     stage_max   = (doing_det ? HAVOC_CYCLES_INIT : HAVOC_CYCLES) *
                   perf_score / havoc_div / 100;
+#ifdef AFL_DRIFT_DETECT
+    if (havoc_boost > 1) stage_max *= havoc_boost;
+#endif
 
   } else {
 
@@ -8294,8 +8556,11 @@ int main(int argc, char** argv) {
 #ifdef AFL_DRIFT_DETECT
   drift_det = drift_init();
   if (!drift_det) FATAL("Failed to initialize drift detector");
-  ACTF("Drift detection initialized (window=%u, threshold=%.3f)",
-       drift_det->window_size, drift_det->drift_threshold);
+  ACTF("Drift detection initialized (window=%u, threshold=%.3f, selective=%u, soft=%u, max_resets=%u, havoc_boost=%s, boost_cycles=%s)",
+       drift_det->window_size, drift_det->drift_threshold,
+       drift_det->selective_reset, drift_det->soft_reset, drift_det->max_resets,
+       getenv("AFL_DRIFT_HAVOC_BOOST") ? getenv("AFL_DRIFT_HAVOC_BOOST") : "1",
+       getenv("AFL_DRIFT_BOOST_CYCLES") ? getenv("AFL_DRIFT_BOOST_CYCLES") : "1");
   drift_csv_init();
 #endif
 
@@ -8319,6 +8584,15 @@ int main(int argc, char** argv) {
       current_entry     = 0;
       cur_skipped_paths = 0;
       queue_cur         = queue;
+
+#ifdef AFL_DRIFT_DETECT
+      /* Decay havoc boost after the boosted cycle(s) end */
+      if (havoc_boost > 1 && boost_until_cycle > 0 &&
+          queue_cycle >= boost_until_cycle) {
+        ACTF("Havoc boost expired at cycle %llu (was %ux)", queue_cycle, havoc_boost);
+        havoc_boost = 1;
+      }
+#endif
 
       while (seek_to) {
         current_entry++;
@@ -8380,12 +8654,10 @@ int main(int argc, char** argv) {
           
           ACTF("Value drift detected at iteration %llu!", drift_iteration);
           
-          /* Only reset corpus if coverage is not increasing */
-          if (drift_det->reset_on_drift && !is_coverage_rate_increasing(drift_det)) {
-            WARNF("Coverage not increasing - performing corpus reset...");
-            perform_corpus_reset();
-            ACTF("Resuming fuzzing from initial seeds...");
-          }
+          /* drift_check_value already checks the guard/always_reset */
+          WARNF("Performing corpus reset...");
+          perform_corpus_reset();
+          ACTF("Resuming fuzzing from initial seeds...");
         }
       }
       
