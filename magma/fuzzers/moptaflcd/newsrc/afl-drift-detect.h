@@ -59,6 +59,11 @@ struct drift_detector {
   u32    consecutive_drifts;   /* Consecutive drift detections without reset */
   u32    consecutive_required; /* Consecutive drifts needed to trigger reset */
   
+  /* Diagnostics (populated each drift_check_value call for CSV logging) */
+  double last_p_value;         /* Last KS test p-value (NaN if not computed) */
+  double last_growth_rate;     /* Last window growth rate */
+  double last_stagnation_thresh; /* Last stagnation threshold */
+  
 };
 
 /* Global drift detector instance */
@@ -94,5 +99,9 @@ u8 drift_should_stop(struct drift_detector* dd);
 
 /* Check if coverage rate is increasing */
 u8 is_coverage_rate_increasing(struct drift_detector* dd);
+
+/* Write diagnostic stats file (drift_stats) to output directory */
+void drift_write_stats(struct drift_detector* dd, u8* out_dir,
+                       u64 queued_paths, u32 corpus_resets);
 
 #endif /* !_AFL_DRIFT_DETECT_H */

@@ -238,7 +238,7 @@ magma/tools/captain/window_experiment/
 magma/tools/captain/*.log
 
 # Generated plots
-plots_v3/
+plots*/
 
 # Experiment summary docs (auto-generated)
 EXPERIMENT_SUMMARY.md

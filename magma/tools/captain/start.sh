@@ -65,6 +65,10 @@ if [ -t 1 ]; then
         --env=AFL_DRIFT_MAX_RESETS="$AFL_DRIFT_MAX_RESETS" \
         --env=AFL_DRIFT_HAVOC_BOOST="$AFL_DRIFT_HAVOC_BOOST" \
         --env=AFL_DRIFT_BOOST_CYCLES="$AFL_DRIFT_BOOST_CYCLES" \
+        --env=AFL_DRIFT_COOLDOWN="$AFL_DRIFT_COOLDOWN" \
+        --env=AFL_DRIFT_CONSECUTIVE="$AFL_DRIFT_CONSECUTIVE" \
+        --env=AFL_DRIFT_EMA_ALPHA="$AFL_DRIFT_EMA_ALPHA" \
+        --env=AFL_DRIFT_STAGNATION_FACTOR="$AFL_DRIFT_STAGNATION_FACTOR" \
         $flag_aff $flag_ep "$IMG_NAME"
 else
     container_id=$(
@@ -81,6 +85,10 @@ else
         --env=AFL_DRIFT_MAX_RESETS="$AFL_DRIFT_MAX_RESETS" \
         --env=AFL_DRIFT_HAVOC_BOOST="$AFL_DRIFT_HAVOC_BOOST" \
         --env=AFL_DRIFT_BOOST_CYCLES="$AFL_DRIFT_BOOST_CYCLES" \
+        --env=AFL_DRIFT_COOLDOWN="$AFL_DRIFT_COOLDOWN" \
+        --env=AFL_DRIFT_CONSECUTIVE="$AFL_DRIFT_CONSECUTIVE" \
+        --env=AFL_DRIFT_EMA_ALPHA="$AFL_DRIFT_EMA_ALPHA" \
+        --env=AFL_DRIFT_STAGNATION_FACTOR="$AFL_DRIFT_STAGNATION_FACTOR" \
         --network=none \
         $flag_aff $flag_ep "$IMG_NAME"
     )

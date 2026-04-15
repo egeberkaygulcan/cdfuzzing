@@ -47,6 +47,8 @@ typedef struct {
     uint32_t drift_count;          /* Value distribution drifts */
     uint32_t reset_count;          /* Corpus resets */
     uint32_t jerk_drift_count;     /* Jerk drifts detected */
+    uint32_t consecutive_drifts;   /* Consecutive drift detections */
+    uint32_t cooldown_remaining;   /* Cooldown iterations remaining */
 
     /* Early stop state */
     bool     stopped_early;
@@ -80,6 +82,13 @@ typedef struct {
     /* Initial corpus size (for reset) */
     size_t   initial_corpus_count;
 
+    /* Diagnostics (populated each drift_check_value call for CSV logging) */
+    double   last_p_value;
+    double   last_growth_rate;
+
+    /* Cached output directory for stats file */
+    char     output_dir[PATH_MAX];
+
 } drift_detector_t;
 
 /* Initialize drift detector - returns NULL on failure */
@@ -112,9 +121,14 @@ bool drift_is_coverage_rate_increasing(drift_detector_t* dd);
 
 /* CSV logging: append row if >= 1 minute has elapsed */
 void drift_csv_update(drift_detector_t* dd, uint64_t current_iter,
-                      uint64_t coverage, uint64_t elapsed_ms);
+                      uint64_t coverage, uint64_t elapsed_ms,
+                      uint64_t corpus);
 
 /* Perform corpus reset on a honggfuzz_t instance */
 void drift_perform_corpus_reset(drift_detector_t* dd, honggfuzz_t* hfuzz);
+
+/* Write human-readable diagnostic stats file */
+void drift_write_stats_file(drift_detector_t* dd, const char* out_dir,
+                            uint64_t queued_paths);
 
 #endif /* _HF_DRIFT_DETECT_H */

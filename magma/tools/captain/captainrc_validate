@@ -1,0 +1,51 @@
+## Validation config: verify CD fixes work, 2h runs, high-signal targets
+WORKDIR=/users/eldarfin/experiment_results/validate
+REPEAT=1
+TIMEOUT=2h
+POLL=5
+CACHE_ON_DISK=1
+NO_ARCHIVE=1
+MAGMA=/users/eldarfin/cdfuzzing/magma
+
+# Test all 6 CD fuzzers + their baselines (12 fuzzers × 2 targets)
+FUZZERS=(afl aflcd aflfast aflfastcd moptafl moptaflcd fairfuzz fairfuzzcd aflplusplus aflpluspluscd honggfuzz honggfuzzcd)
+
+# High-signal targets where reset storms were worst
+afl_TARGETS=(libpng php)
+aflcd_TARGETS=(libpng php)
+aflfast_TARGETS=(libpng php)
+aflfastcd_TARGETS=(libpng php)
+moptafl_TARGETS=(libpng php)
+moptaflcd_TARGETS=(libpng php)
+fairfuzz_TARGETS=(libpng php)
+fairfuzzcd_TARGETS=(libpng php)
+aflplusplus_TARGETS=(libpng php)
+aflpluspluscd_TARGETS=(libpng php)
+honggfuzz_TARGETS=(libpng php)
+honggfuzzcd_TARGETS=(libpng php)
+
+# Only test unserialize from php (highest reset count) + libpng_read_fuzzer
+afl_php_PROGRAMS=(unserialize)
+aflcd_php_PROGRAMS=(unserialize)
+aflfast_php_PROGRAMS=(unserialize)
+aflfastcd_php_PROGRAMS=(unserialize)
+moptafl_php_PROGRAMS=(unserialize)
+moptaflcd_php_PROGRAMS=(unserialize)
+fairfuzz_php_PROGRAMS=(unserialize)
+fairfuzzcd_php_PROGRAMS=(unserialize)
+aflplusplus_php_PROGRAMS=(unserialize)
+aflpluspluscd_php_PROGRAMS=(unserialize)
+honggfuzz_php_PROGRAMS=(unserialize)
+honggfuzzcd_php_PROGRAMS=(unserialize)
+
+# CD parameters - optimized (Set B: best coverage + fewest resets in 1h trials)
+export AFL_DRIFT_WINDOW=100
+export AFL_DRIFT_THRESHOLD=0.05
+export AFL_DRIFT_SOFT_RESET=2
+export AFL_DRIFT_MAX_RESETS=0
+export AFL_DRIFT_HAVOC_BOOST=2
+export AFL_DRIFT_BOOST_CYCLES=1
+export AFL_DRIFT_COOLDOWN=10
+export AFL_DRIFT_CONSECUTIVE=5
+export AFL_DRIFT_EMA_ALPHA=0.1
+export AFL_DRIFT_STAGNATION_FACTOR=0.5

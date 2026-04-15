@@ -50,7 +50,7 @@ static double ks_test_two_sample(double* data1, u32 n1, double* data2, u32 n2) {
     if (diff > d_max) d_max = diff;
     
     if (sorted1[i] <= sorted2[j]) i++;
-    if (sorted2[j] <= sorted1[i]) j++;
+    if (j < n2 && sorted2[j] <= sorted1[i < n1 ? i : n1 - 1]) j++;
   }
   
   ck_free(sorted1);
@@ -152,6 +152,10 @@ struct drift_detector* drift_init(void) {
   dd->stop_iteration = 0;
   dd->last_queued_paths = 0;
   dd->last_coverage = 0;
+  /* Diagnostic state */
+  dd->last_p_value = -1.0;
+  dd->last_growth_rate = 0.0;
+  dd->last_stagnation_thresh = 0.0;
   
   SAYF(cGRN "[+] " cRST "Drift detection with jerk tracking enabled:\n");
   SAYF("    Value drift: window=%u, threshold=%.3f, reset=%s\n",
@@ -340,8 +344,14 @@ u8 drift_check_value(struct drift_detector* dd, u64 current_iter) {
   
   /* If coverage is growing above the adaptive threshold, no stagnation */
   double stagnation_threshold = dd->growth_ema * dd->stagnation_factor;
+  
+  /* Store diagnostics for CSV logging */
+  dd->last_growth_rate = growth_rate;
+  dd->last_stagnation_thresh = stagnation_threshold;
+  
   if (growth_rate > stagnation_threshold && stagnation_threshold > 0.0) {
     dd->consecutive_drifts = 0;
+    dd->last_p_value = -1.0;  /* KS test not run */
     return 0;
   }
   
@@ -362,6 +372,9 @@ u8 drift_check_value(struct drift_detector* dd, u64 current_iter) {
   
   ck_free(current_values);
   ck_free(previous_values);
+  
+  /* Store p-value for CSV logging */
+  dd->last_p_value = p_value;
   
   /* Detect drift if p-value is below threshold */
   if (p_value < dd->drift_threshold) {
@@ -449,4 +462,41 @@ u8 drift_check_jerk(struct drift_detector* dd, u64 current_iter) {
 u8 drift_should_stop(struct drift_detector* dd) {
   if (!dd || !dd->stop_on_jerk_drift) return 0;
   return dd->stopped_early;
+}
+
+/* Write human-readable diagnostic stats file (like AFL's fuzzer_stats) */
+void drift_write_stats(struct drift_detector* dd, u8* out_dir,
+                       u64 queued_paths, u32 corpus_resets) {
+  
+  if (!dd || !out_dir) return;
+  
+  u8* fn = alloc_printf("%s/drift_stats", out_dir);
+  FILE* f = fopen((char*)fn, "w");
+  if (!f) { ck_free(fn); return; }
+  
+  fprintf(f, "drift_window        : %u\n", dd->window_size);
+  fprintf(f, "drift_threshold     : %.4f\n", dd->drift_threshold);
+  fprintf(f, "drift_cooldown      : %u\n", dd->cooldown);
+  fprintf(f, "drift_consecutive   : %u\n", dd->consecutive_required);
+  fprintf(f, "drift_max_resets    : %u\n", dd->max_resets);
+  fprintf(f, "ema_alpha           : %.4f\n", dd->ema_alpha);
+  fprintf(f, "stagnation_factor   : %.4f\n", dd->stagnation_factor);
+  fprintf(f, "history_len         : %u\n", dd->history_len);
+  fprintf(f, "queued_paths        : %llu\n", (unsigned long long)queued_paths);
+  fprintf(f, "drift_count         : %u\n", dd->drift_count);
+  fprintf(f, "reset_count         : %u\n", dd->reset_count);
+  fprintf(f, "corpus_resets       : %u\n", corpus_resets);
+  fprintf(f, "jerk_drift_count    : %u\n", dd->jerk_drift_count);
+  fprintf(f, "consecutive_drifts  : %u\n", dd->consecutive_drifts);
+  fprintf(f, "cooldown_remaining  : %u\n", dd->cooldown_remaining);
+  fprintf(f, "growth_ema          : %.4f\n", dd->growth_ema);
+  fprintf(f, "last_p_value        : %.6f\n", dd->last_p_value);
+  fprintf(f, "last_growth_rate    : %.4f\n", dd->last_growth_rate);
+  fprintf(f, "last_stagnation_thr : %.4f\n", dd->last_stagnation_thresh);
+  fprintf(f, "jerk_history_len    : %u\n", dd->jerk_history_len);
+  fprintf(f, "mean_jerk_len       : %u\n", dd->mean_jerk_len);
+  fprintf(f, "stopped_early       : %u\n", dd->stopped_early);
+  
+  fclose(f);
+  ck_free(fn);
 }

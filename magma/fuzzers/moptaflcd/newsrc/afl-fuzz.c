@@ -1334,8 +1334,8 @@ static void drift_csv_init(void) {
   if (!drift_csv_file) PFATAL("Unable to create '%s'", fn);
   ck_free(fn);
 
-  fprintf(drift_csv_file, "timestamp,iterations,coverage,total_resets,drift_count,cooldown_remaining\n");
-  fprintf(drift_csv_file, "0,0,0,0,0,0\n");
+  fprintf(drift_csv_file, "minute,iterations,queued_paths,coverage,p_value,growth_rate,ema_growth,stagnation_thresh,consecutive_drifts,cooldown_remaining,reset_count,drift_count,jerk_drift_count\n");
+  fprintf(drift_csv_file, "0,0,0,0,-1,0,0,0,0,0,0,0,0\n");
   fflush(drift_csv_file);
 
   drift_csv_last_update = get_cur_time();
@@ -1345,7 +1345,7 @@ static void drift_csv_init(void) {
 
 /* Append a row if >=1 minute has elapsed since last write. */
 
-static void drift_csv_update(u64 current_iter, u32 current_coverage) {
+static void drift_csv_update(u64 current_iter, u32 current_coverage, u32 cur_queued) {
 
   if (!drift_csv_file) return;
 
@@ -1355,14 +1355,24 @@ static void drift_csv_update(u64 current_iter, u32 current_coverage) {
   drift_csv_minute++;
   drift_csv_last_update = now;
 
-  fprintf(drift_csv_file, "%u,%llu,%u,%u,%u,%u\n",
+  fprintf(drift_csv_file, "%u,%llu,%u,%u,%.6f,%.4f,%.4f,%.4f,%u,%u,%u,%u,%u\n",
           drift_csv_minute,
-          current_iter,
+          (unsigned long long)current_iter,
+          cur_queued,
           current_coverage,
+          drift_det ? drift_det->last_p_value : -1.0,
+          drift_det ? drift_det->last_growth_rate : 0.0,
+          drift_det ? drift_det->growth_ema : 0.0,
+          drift_det ? drift_det->last_stagnation_thresh : 0.0,
+          drift_det ? drift_det->consecutive_drifts : 0,
+          drift_det ? drift_det->cooldown_remaining : 0,
           corpus_reset_count,
           drift_det ? drift_det->drift_count : 0,
-          drift_det ? drift_det->cooldown_remaining : 0);
+          drift_det ? drift_det->jerk_drift_count : 0);
   fflush(drift_csv_file);
+
+  /* Write human-readable stats file alongside CSV */
+  drift_write_stats(drift_det, out_dir, cur_queued, corpus_reset_count);
 
 }
 
@@ -12783,7 +12793,7 @@ break;
         }
       }
 
-      drift_csv_update(drift_iteration, current_coverage);
+      drift_csv_update(drift_iteration, current_coverage, queued_paths);
     }
 #endif
 

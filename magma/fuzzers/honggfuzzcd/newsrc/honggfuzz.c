@@ -301,9 +301,8 @@ static void driftCycle(honggfuzz_t* hfuzz) {
         if (drift_check_value(drift_det, mutations)) {
             LOG_I("Value drift detected at iteration %" PRIu64 "!", mutations);
 
-            if (drift_det->reset_on_drift &&
-                !drift_is_coverage_rate_increasing(drift_det)) {
-                LOG_W("Coverage not increasing - performing corpus reset...");
+            if (drift_det->reset_on_drift) {
+                LOG_W("Performing corpus reset...");
                 drift_perform_corpus_reset(drift_det, hfuzz);
                 LOG_I("Resuming fuzzing from initial seeds...");
             }
@@ -326,7 +325,7 @@ static void driftCycle(honggfuzz_t* hfuzz) {
         }
     }
 
-    drift_csv_update(drift_det, mutations, coverage, elapsed_ms);
+    drift_csv_update(drift_det, mutations, coverage, elapsed_ms, corpus);
 }
 
 static uint8_t mainThreadLoop(honggfuzz_t* hfuzz) {

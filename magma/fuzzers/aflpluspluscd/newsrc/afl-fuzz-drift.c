@@ -109,6 +109,35 @@ struct drift_detector *drift_init(void) {
   env_val = getenv("AFL_DRIFT_RESET");
   dd->reset_on_drift = 1;  /* always enabled */
 
+  env_val = getenv("AFL_DRIFT_ALWAYS_RESET");
+  dd->always_reset = env_val ? atoi(env_val) : 0;
+
+  env_val = getenv("AFL_DRIFT_SELECTIVE");
+  dd->selective_reset = env_val ? atoi(env_val) : 0;
+
+  env_val = getenv("AFL_DRIFT_SOFT_RESET");
+  dd->soft_reset = env_val ? atoi(env_val) : 0;
+
+  env_val = getenv("AFL_DRIFT_MAX_RESETS");
+  dd->max_resets = env_val ? atoi(env_val) : 0;
+
+  env_val = getenv("AFL_DRIFT_COOLDOWN");
+  dd->cooldown = env_val ? atoi(env_val) : 0;
+  dd->cooldown_remaining = 0;
+
+  env_val = getenv("AFL_DRIFT_CONSECUTIVE");
+  dd->consecutive_required = env_val ? atoi(env_val) : 1;
+  dd->consecutive_drifts = 0;
+
+  env_val = getenv("AFL_DRIFT_EMA_ALPHA");
+  dd->ema_alpha = env_val ? atof(env_val) : 0.1;
+
+  env_val = getenv("AFL_DRIFT_STAGNATION_FACTOR");
+  dd->stagnation_factor = env_val ? atof(env_val) : 0.25;
+
+  dd->growth_ema = 0.0;
+  dd->ema_initialized = 0;
+
   env_val = getenv("AFL_METRICS_WINDOW");
   dd->metrics_window_size = env_val ? atoi(env_val) : 100;
 
@@ -141,11 +170,18 @@ struct drift_detector *drift_init(void) {
   dd->stop_iteration     = 0;
   dd->last_queued_paths  = 0;
   dd->last_coverage      = 0;
+  dd->last_p_value       = -1.0;
+  dd->last_growth_rate   = 0.0;
+  dd->last_stagnation_thresh = 0.0;
 
   SAYF(cGRN "[+] " cRST "Drift detection with jerk tracking enabled:\n");
   SAYF("    Value drift: window=%u, threshold=%.3f, reset=%s\n",
        dd->window_size, dd->drift_threshold,
        dd->reset_on_drift ? "ON" : "OFF");
+  SAYF("    Cooldown: %u iters, consecutive required: %u\n",
+       dd->cooldown, dd->consecutive_required);
+  SAYF("    Adaptive stagnation: ema_alpha=%.2f, stag_factor=%.2f\n",
+       dd->ema_alpha, dd->stagnation_factor);
   SAYF("    Jerk tracking: window=%u, mean_jerk_window=%u\n",
        dd->jerk_window_size, dd->mean_jerk_window);
   SAYF("    Early stop on jerk drift: %s\n",
@@ -153,6 +189,19 @@ struct drift_detector *drift_init(void) {
 
   return dd;
 
+}
+
+/* ================================================================
+   drift_reset_history  (clear buffers after corpus reset)
+   ================================================================ */
+
+void drift_reset_history(struct drift_detector *dd) {
+  if (!dd) return;
+  dd->history_len = 0;
+  dd->jerk_history_len = 0;
+  dd->mean_jerk_len = 0;
+  dd->consecutive_drifts = 0;
+  dd->cooldown_remaining = dd->cooldown;
 }
 
 /* ================================================================
@@ -321,10 +370,45 @@ u8 is_coverage_rate_increasing(struct drift_detector *dd) {
 u8 drift_check_value(struct drift_detector *dd, u64 current_iter) {
 
   if (!dd) return 0;
+
+  /* Cooldown: skip checks after a reset */
+  if (dd->cooldown_remaining > 0) {
+    dd->cooldown_remaining--;
+    return 0;
+  }
+
+  /* Need at least 2 windows of data */
   if (dd->history_len < dd->window_size * 2) return 0;
 
+  /* Adaptive stagnation check using EMA of growth rates */
+  u32 current_end = dd->history_len - 1;
   u32 current_start  = dd->history_len - dd->window_size;
   u32 previous_start = current_start - dd->window_size;
+
+  u64 recent_growth = dd->value_history[current_end] - dd->value_history[current_start];
+  u64 previous_growth = dd->value_history[current_start] - dd->value_history[previous_start];
+  double growth_rate = (double)recent_growth;
+
+  /* Update EMA of growth rates */
+  if (!dd->ema_initialized) {
+    dd->growth_ema = growth_rate;
+    dd->ema_initialized = 1;
+  } else {
+    dd->growth_ema = dd->ema_alpha * growth_rate + (1.0 - dd->ema_alpha) * dd->growth_ema;
+  }
+
+  /* If coverage is growing above the adaptive threshold, no stagnation */
+  double stagnation_threshold = dd->growth_ema * dd->stagnation_factor;
+
+  /* Store diagnostics for CSV logging */
+  dd->last_growth_rate = growth_rate;
+  dd->last_stagnation_thresh = stagnation_threshold;
+
+  if (growth_rate > stagnation_threshold && stagnation_threshold > 0.0) {
+    dd->consecutive_drifts = 0;
+    dd->last_p_value = -1.0;
+    return 0;
+  }
 
   double *current_values  = ck_alloc(dd->window_size * sizeof(double));
   double *previous_values = ck_alloc(dd->window_size * sizeof(double));
@@ -343,30 +427,44 @@ u8 drift_check_value(struct drift_detector *dd, u64 current_iter) {
   ck_free(current_values);
   ck_free(previous_values);
 
+  /* Store p-value for CSV logging */
+  dd->last_p_value = p_value;
+
   if (p_value < dd->drift_threshold) {
 
     dd->drift_count++;
+    dd->consecutive_drifts++;
 
     SAYF(cYEL "\n[!] " cRST
-         "VALUE DRIFT detected at iter %llu | p-value: %.4f\n",
-         (unsigned long long)current_iter, p_value);
+         "VALUE DRIFT detected at iter %llu | p-value: %.4f | consecutive: %u/%u\n",
+         (unsigned long long)current_iter, p_value,
+         dd->consecutive_drifts, dd->consecutive_required);
+    SAYF("    Growth: recent=%llu prev=%llu ema=%.1f threshold=%.1f\n",
+         (unsigned long long)recent_growth, (unsigned long long)previous_growth,
+         dd->growth_ema, stagnation_threshold);
 
-    u8 is_increasing = is_coverage_rate_increasing(dd);
-    SAYF("    Coverage rate increasing: %s\n",
-         is_increasing ? "YES" : "NO");
-
-    if (dd->reset_on_drift && !is_increasing) {
-
-      dd->reset_count++;
-      SAYF(cLRD "    CORPUS RESET" cRST " - Coverage rate not increasing\n");
-      return 1;
-
-    } else if (dd->reset_on_drift && is_increasing) {
-
-      SAYF("    NO RESET - Coverage rate is increasing\n");
-
+    /* Require consecutive drift detections before acting */
+    if (dd->consecutive_drifts < dd->consecutive_required) {
+      SAYF("    WAITING - need %u more consecutive detections\n",
+           dd->consecutive_required - dd->consecutive_drifts);
+      return 0;
     }
 
+    if (dd->reset_on_drift) {
+      if (dd->max_resets > 0 && dd->reset_count >= dd->max_resets) {
+        SAYF("    NO RESET - Max resets reached (%u/%u)\n",
+             dd->reset_count, dd->max_resets);
+        return 0;
+      }
+      dd->reset_count++;
+      dd->consecutive_drifts = 0;
+      SAYF(cLRD "    CORPUS RESET #%u" cRST " - stagnation + drift confirmed\n",
+           dd->reset_count);
+      return 1;
+    }
+
+  } else {
+    dd->consecutive_drifts = 0;
   }
 
   return 0;
@@ -433,6 +531,47 @@ u8 drift_should_stop(struct drift_detector *dd) {
 }
 
 /* ================================================================
+   drift_write_stats  (human-readable diagnostic file)
+   ================================================================ */
+
+void drift_write_stats(struct drift_detector *dd, u8 *out_dir,
+                       u64 queued_paths, u32 corpus_resets) {
+
+  if (!dd || !out_dir) return;
+
+  u8 *fn = alloc_printf("%s/drift_stats", out_dir);
+  FILE *f = fopen((char *)fn, "w");
+  if (!f) { ck_free(fn); return; }
+
+  fprintf(f, "drift_window        : %u\n", dd->window_size);
+  fprintf(f, "drift_threshold     : %.4f\n", dd->drift_threshold);
+  fprintf(f, "drift_cooldown      : %u\n", dd->cooldown);
+  fprintf(f, "drift_consecutive   : %u\n", dd->consecutive_required);
+  fprintf(f, "drift_max_resets    : %u\n", dd->max_resets);
+  fprintf(f, "ema_alpha           : %.4f\n", dd->ema_alpha);
+  fprintf(f, "stagnation_factor   : %.4f\n", dd->stagnation_factor);
+  fprintf(f, "history_len         : %u\n", dd->history_len);
+  fprintf(f, "queued_paths        : %llu\n", (unsigned long long)queued_paths);
+  fprintf(f, "drift_count         : %u\n", dd->drift_count);
+  fprintf(f, "reset_count         : %u\n", dd->reset_count);
+  fprintf(f, "corpus_resets       : %u\n", corpus_resets);
+  fprintf(f, "jerk_drift_count    : %u\n", dd->jerk_drift_count);
+  fprintf(f, "consecutive_drifts  : %u\n", dd->consecutive_drifts);
+  fprintf(f, "cooldown_remaining  : %u\n", dd->cooldown_remaining);
+  fprintf(f, "growth_ema          : %.4f\n", dd->growth_ema);
+  fprintf(f, "last_p_value        : %.6f\n", dd->last_p_value);
+  fprintf(f, "last_growth_rate    : %.4f\n", dd->last_growth_rate);
+  fprintf(f, "last_stagnation_thr : %.4f\n", dd->last_stagnation_thresh);
+  fprintf(f, "jerk_history_len    : %u\n", dd->jerk_history_len);
+  fprintf(f, "mean_jerk_len       : %u\n", dd->mean_jerk_len);
+  fprintf(f, "stopped_early       : %u\n", dd->stopped_early);
+
+  fclose(f);
+  ck_free(fn);
+
+}
+
+/* ================================================================
    AFL++ corpus reset  (uses queue_buf[] + disabled flag)
    ================================================================ */
 
@@ -490,6 +629,9 @@ static void perform_corpus_reset(afl_state_t *afl) {
   ACTF("Corpus reset #%u complete: disabled %u entries, kept %u seeds",
        corpus_reset_count, removed_count, afl->queued_at_start);
 
+  /* Clear drift history so detector needs fresh data before re-triggering */
+  drift_reset_history(drift_det);
+
 }
 
 /* ================================================================
@@ -504,8 +646,8 @@ static void drift_csv_init(afl_state_t *afl) {
   ck_free(fn);
 
   fprintf(drift_csv_file,
-          "timestamp,iterations,coverage,reset_flag,early_stop_flag\n");
-  fprintf(drift_csv_file, "0,0,0,false,false\n");
+          "minute,iterations,queued_paths,coverage,p_value,growth_rate,ema_growth,stagnation_thresh,consecutive_drifts,cooldown_remaining,reset_count,drift_count,jerk_drift_count\n");
+  fprintf(drift_csv_file, "0,0,0,0,-1,0,0,0,0,0,0,0,0\n");
   fflush(drift_csv_file);
 
   drift_csv_last_update = get_cur_time();
@@ -513,7 +655,8 @@ static void drift_csv_init(afl_state_t *afl) {
 
 }
 
-static void drift_csv_update(u64 current_iter, u32 current_coverage) {
+static void drift_csv_update(u64 current_iter, u32 current_coverage,
+                             u32 cur_queued) {
 
   if (!drift_csv_file) return;
 
@@ -523,12 +666,20 @@ static void drift_csv_update(u64 current_iter, u32 current_coverage) {
   drift_csv_minute++;
   drift_csv_last_update = now;
 
-  fprintf(drift_csv_file, "%u,%llu,%u,%s,%s\n",
+  fprintf(drift_csv_file, "%u,%llu,%u,%u,%.6f,%.4f,%.4f,%.4f,%u,%u,%u,%u,%u\n",
           drift_csv_minute,
           (unsigned long long)current_iter,
+          cur_queued,
           current_coverage,
-          corpus_reset_count > 0 ? "true" : "false",
-          jerk_drift_detected ? "true" : "false");
+          drift_det ? drift_det->last_p_value : -1.0,
+          drift_det ? drift_det->last_growth_rate : 0.0,
+          drift_det ? drift_det->growth_ema : 0.0,
+          drift_det ? drift_det->last_stagnation_thresh : 0.0,
+          drift_det ? drift_det->consecutive_drifts : 0,
+          drift_det ? drift_det->cooldown_remaining : 0,
+          corpus_reset_count,
+          drift_det ? drift_det->drift_count : 0,
+          drift_det ? drift_det->jerk_drift_count : 0);
   fflush(drift_csv_file);
 
 }
@@ -592,15 +743,9 @@ void drift_cycle(afl_state_t *afl) {
 
       ACTF("Value drift detected at iteration %llu!",
            (unsigned long long)drift_iteration);
-
-      if (drift_det->reset_on_drift &&
-          !is_coverage_rate_increasing(drift_det)) {
-
-        WARNF("Coverage not increasing - performing corpus reset...");
-        perform_corpus_reset(afl);
-        ACTF("Resuming fuzzing from initial seeds...");
-
-      }
+      WARNF("Performing corpus reset...");
+      perform_corpus_reset(afl);
+      ACTF("Resuming fuzzing from initial seeds...");
 
     }
 
@@ -626,7 +771,11 @@ void drift_cycle(afl_state_t *afl) {
 
   }
 
-  drift_csv_update(drift_iteration, current_coverage);
+  drift_csv_update(drift_iteration, current_coverage, afl->queued_paths);
+
+  /* Write human-readable stats file alongside CSV */
+  drift_write_stats(drift_det, afl->out_dir, afl->queued_paths,
+                    corpus_reset_count);
 
 }
 

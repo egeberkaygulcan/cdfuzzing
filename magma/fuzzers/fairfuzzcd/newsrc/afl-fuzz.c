@@ -139,8 +139,13 @@ EXP_ST u8  skip_deterministic,        /* Skip deterministic stages?       */
 #ifdef AFL_DRIFT_DETECT
 static struct drift_detector *drift_det = NULL;
 static u64  drift_iteration      = 0;
-static u32  jerk_drift_detected   = 0;
+static u8   jerk_drift_detected   = 0;
 static u32  corpus_reset_performed = 0;
+static u32  corpus_reset_count     = 0;
+static u64  first_corpus_reset_iteration = 0;
+static u64  first_corpus_reset_time      = 0;
+static u64  last_corpus_reset_iteration  = 0;
+static u64  last_corpus_reset_time       = 0;
 static FILE *drift_csv_fp          = NULL;
 static u64  drift_csv_last_time    = 0;
 #endif
@@ -1275,6 +1280,16 @@ static void perform_corpus_reset(void) {
   SAYF(cGRN "[+] " cRST "Corpus reset: kept %u initial inputs\n",
        queued_at_start);
 
+  /* Track reset statistics */
+  corpus_reset_count++;
+  u64 reset_time = get_cur_time() - start_time;
+  if (corpus_reset_count == 1) {
+    first_corpus_reset_iteration = drift_iteration;
+    first_corpus_reset_time = reset_time;
+  }
+  last_corpus_reset_iteration = drift_iteration;
+  last_corpus_reset_time = reset_time;
+
 }
 
 /* Initialize drift CSV log file. */
@@ -1285,7 +1300,8 @@ static void drift_csv_init(void) {
 
   if (drift_csv_fp) {
     fprintf(drift_csv_fp,
-            "timestamp,iterations,coverage,reset_flag,early_stop_flag\n");
+            "minute,iterations,queued_paths,coverage,p_value,growth_rate,ema_growth,stagnation_thresh,consecutive_drifts,cooldown_remaining,reset_count,drift_count,jerk_drift_count\n");
+    fprintf(drift_csv_fp, "0,0,0,0,-1,0,0,0,0,0,0,0,0\n");
     fflush(drift_csv_fp);
   }
 
@@ -1295,20 +1311,35 @@ static void drift_csv_init(void) {
 }
 
 /* Update drift CSV log (every 60 seconds). */
-static void drift_csv_update(u64 iteration, u32 coverage,
-                             u8 reset_flag, u8 early_stop_flag) {
+static void drift_csv_update(u64 iteration, u32 coverage, u32 cur_queued) {
+
+  static u32 drift_csv_minute = 0;
 
   if (!drift_csv_fp) return;
 
   u64 now = get_cur_time() / 1000;
   if (now - drift_csv_last_time < 60) return;
 
+  drift_csv_minute++;
   drift_csv_last_time = now;
-  fprintf(drift_csv_fp, "%llu,%llu,%u,%u,%u\n",
-          (unsigned long long)(now - start_time / 1000),
-          (unsigned long long)iteration, coverage,
-          (u32)reset_flag, (u32)early_stop_flag);
+  fprintf(drift_csv_fp, "%u,%llu,%u,%u,%.6f,%.4f,%.4f,%.4f,%u,%u,%u,%u,%u\n",
+          drift_csv_minute,
+          (unsigned long long)iteration,
+          cur_queued,
+          coverage,
+          drift_det ? drift_det->last_p_value : -1.0,
+          drift_det ? drift_det->last_growth_rate : 0.0,
+          drift_det ? drift_det->growth_ema : 0.0,
+          drift_det ? drift_det->last_stagnation_thresh : 0.0,
+          drift_det ? drift_det->consecutive_drifts : 0,
+          drift_det ? drift_det->cooldown_remaining : 0,
+          corpus_reset_count,
+          drift_det ? drift_det->drift_count : 0,
+          drift_det ? drift_det->jerk_drift_count : 0);
   fflush(drift_csv_fp);
+
+  /* Write human-readable stats file alongside CSV */
+  drift_write_stats(drift_det, out_dir, cur_queued, corpus_reset_count);
 
 }
 
@@ -9230,28 +9261,51 @@ int main(int argc, char** argv) {
     skipped_fuzz = fuzz_one(use_argv);
 
 #ifdef AFL_DRIFT_DETECT
-    if (drift_det) {
+    if (!skipped_fuzz && drift_det) {
 
       drift_iteration++;
       u32 coverage = count_non_255_bytes(virgin_bits);
 
       drift_update(drift_det, drift_iteration, queued_paths, coverage);
-      drift_calculate_jerk(drift_det, drift_iteration);
-      drift_record_mean_jerk(drift_det);
 
-      u8 do_reset = drift_check_value(drift_det, drift_iteration);
-      if (do_reset) {
-        perform_corpus_reset();
-        corpus_reset_performed = 1;
-      } else {
-        corpus_reset_performed = 0;
+      /* Calculate jerk every jerk_window_size iterations */
+      if (drift_iteration >= drift_det->jerk_window_size &&
+          drift_iteration % drift_det->jerk_window_size == 0) {
+        drift_calculate_jerk(drift_det, drift_iteration);
       }
 
-      u8 did_jerk_drift = drift_check_jerk(drift_det, drift_iteration);
-      jerk_drift_detected = did_jerk_drift ? 1 : 0;
+      /* Record mean jerk every mean_jerk_window iterations */
+      if (drift_det->jerk_history_len >= drift_det->mean_jerk_window &&
+          drift_iteration % drift_det->mean_jerk_window == 0) {
+        drift_record_mean_jerk(drift_det);
+      }
 
-      drift_csv_update(drift_iteration, coverage,
-                       corpus_reset_performed, jerk_drift_detected);
+      /* Check for value drift every window_size iterations */
+      if (drift_iteration >= drift_det->window_size &&
+          drift_iteration % drift_det->window_size == 0) {
+
+        u8 do_reset = drift_check_value(drift_det, drift_iteration);
+        if (do_reset) {
+          perform_corpus_reset();
+          drift_reset_history(drift_det);
+          corpus_reset_performed = 1;
+        } else {
+          corpus_reset_performed = 0;
+        }
+
+      }
+
+      /* Check for jerk drift (one-shot) */
+      if (!jerk_drift_detected &&
+          drift_det->mean_jerk_len >= 20 &&
+          drift_iteration % drift_det->mean_jerk_window == 0) {
+
+        u8 did_jerk_drift = drift_check_jerk(drift_det, drift_iteration);
+        jerk_drift_detected = did_jerk_drift ? 1 : 0;
+
+      }
+
+      drift_csv_update(drift_iteration, coverage, queued_paths);
 
     }
 #endif
@@ -9287,6 +9341,15 @@ stop_fuzzing:
          drift_det->drift_count, drift_det->reset_count,
          drift_det->jerk_drift_count,
          (unsigned long long)drift_iteration);
+    if (corpus_reset_count > 0) {
+      SAYF("    First reset at iteration %llu (%.2f min)\n",
+           (unsigned long long)first_corpus_reset_iteration,
+           first_corpus_reset_time / 60000.0);
+      if (corpus_reset_count > 1)
+        SAYF("    Last reset at iteration %llu (%.2f min)\n",
+             (unsigned long long)last_corpus_reset_iteration,
+             last_corpus_reset_time / 60000.0);
+    }
   }
 #endif
 

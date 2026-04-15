@@ -50,7 +50,7 @@ static double ks_test_two_sample(double* data1, uint32_t n1,
         double diff = fabs(cdf1 - cdf2);
         if (diff > d_max) d_max = diff;
         if (sorted1[i] <= sorted2[j]) i++;
-        if (sorted2[j] <= sorted1[i]) j++;
+        if (j < n2 && sorted2[j] <= sorted1[i < n1 ? i : n1 - 1]) j++;
     }
 
     free(sorted1);
@@ -131,6 +131,18 @@ drift_detector_t* drift_init(const char* output_dir) {
     dd->last_corpus_reset_iteration   = 0;
     dd->last_corpus_reset_time_ms     = 0;
     dd->initial_corpus_count          = 0;
+    dd->consecutive_drifts            = 0;
+    dd->cooldown_remaining            = 0;
+
+    dd->last_p_value      = -1.0;
+    dd->last_growth_rate  = 0.0;
+
+    /* Cache output directory for stats file */
+    if (output_dir) {
+        snprintf(dd->output_dir, sizeof(dd->output_dir), "%s", output_dir);
+    } else {
+        dd->output_dir[0] = '\0';
+    }
 
     /* CSV logging */
     dd->csv_file = NULL;
@@ -142,8 +154,8 @@ drift_detector_t* drift_init(const char* output_dir) {
         snprintf(csv_path, sizeof(csv_path), "%s/drift_log.csv", output_dir);
         dd->csv_file = fopen(csv_path, "w");
         if (dd->csv_file) {
-            fprintf(dd->csv_file, "timestamp,iterations,coverage,reset_flag,early_stop_flag\n");
-            fprintf(dd->csv_file, "0,0,0,false,false\n");
+            fprintf(dd->csv_file, "minute,iterations,queued_paths,coverage,p_value,growth_rate,ema_growth,stagnation_thresh,consecutive_drifts,cooldown_remaining,reset_count,drift_count,jerk_drift_count\n");
+            fprintf(dd->csv_file, "0,0,0,0,-1,0,0,0,0,0,0,0,0\n");
             fflush(dd->csv_file);
         } else {
             LOG_W("Could not create drift CSV at '%s': %s", csv_path, strerror(errno));
@@ -290,6 +302,11 @@ bool drift_check_value(drift_detector_t* dd, uint64_t current_iter) {
 
     uint32_t current_start  = dd->history_len - dd->window_size;
     uint32_t previous_start = current_start - dd->window_size;
+    uint32_t current_end    = dd->history_len - 1;
+
+    /* Store growth rate diagnostic */
+    dd->last_growth_rate = (double)(dd->value_history[current_end] -
+                                    dd->value_history[current_start]);
 
     double* current_values  = (double*)util_Calloc(dd->window_size * sizeof(double));
     double* previous_values = (double*)util_Calloc(dd->window_size * sizeof(double));
@@ -304,6 +321,9 @@ bool drift_check_value(drift_detector_t* dd, uint64_t current_iter) {
 
     free(current_values);
     free(previous_values);
+
+    /* Store p-value diagnostic */
+    dd->last_p_value = p_value;
 
     if (p_value < dd->drift_threshold) {
         dd->drift_count++;
@@ -374,7 +394,8 @@ bool drift_should_stop(drift_detector_t* dd) {
 /* ---------- CSV update ---------- */
 
 void drift_csv_update(drift_detector_t* dd, uint64_t current_iter,
-                      uint64_t coverage, uint64_t elapsed_ms) {
+                      uint64_t coverage, uint64_t elapsed_ms,
+                      uint64_t corpus) {
     if (!dd || !dd->csv_file) return;
 
     if (elapsed_ms - dd->csv_last_update_ms < 60000) return;
@@ -382,13 +403,22 @@ void drift_csv_update(drift_detector_t* dd, uint64_t current_iter,
     dd->csv_minute++;
     dd->csv_last_update_ms = elapsed_ms;
 
-    fprintf(dd->csv_file, "%u,%" PRIu64 ",%" PRIu64 ",%s,%s\n",
+    fprintf(dd->csv_file, "%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.6f,%.4f,0,0,%u,%u,%u,%u,%u\n",
             dd->csv_minute,
             current_iter,
+            corpus,
             coverage,
-            dd->corpus_reset_count > 0 ? "true" : "false",
-            dd->jerk_drift_detected ? "true" : "false");
+            dd->last_p_value,
+            dd->last_growth_rate,
+            dd->consecutive_drifts,
+            dd->cooldown_remaining,
+            dd->corpus_reset_count,
+            dd->drift_count,
+            dd->jerk_drift_count);
     fflush(dd->csv_file);
+
+    /* Write human-readable stats file alongside CSV */
+    drift_write_stats_file(dd, dd->output_dir[0] ? dd->output_dir : NULL, corpus);
 }
 
 /* ---------- Corpus reset ---------- */
@@ -454,4 +484,37 @@ void drift_perform_corpus_reset(drift_detector_t* dd, honggfuzz_t* hfuzz) {
     dd->last_corpus_reset_time_ms   = elapsed_ms;
 
     LOG_I("Corpus reset: kept %zu seeds, removed %zu entries", kept, removed);
+
+    /* Clear drift history so detector needs fresh data before re-triggering */
+    dd->history_len = 0;
+    dd->jerk_history_len = 0;
+    dd->mean_jerk_len = 0;
+}
+
+/* Write human-readable diagnostic stats file */
+void drift_write_stats_file(drift_detector_t* dd, const char* out_dir,
+                            uint64_t queued_paths) {
+    if (!dd || !out_dir) return;
+
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/drift_stats", out_dir);
+    FILE* f = fopen(path, "w");
+    if (!f) return;
+
+    fprintf(f, "drift_window        : %u\n", dd->window_size);
+    fprintf(f, "drift_threshold     : %.4f\n", dd->drift_threshold);
+    fprintf(f, "history_len         : %u\n", dd->history_len);
+    fprintf(f, "queued_paths        : %" PRIu64 "\n", queued_paths);
+    fprintf(f, "drift_count         : %u\n", dd->drift_count);
+    fprintf(f, "reset_count         : %u\n", dd->reset_count);
+    fprintf(f, "corpus_resets       : %u\n", dd->corpus_reset_count);
+    fprintf(f, "jerk_drift_count    : %u\n", dd->jerk_drift_count);
+    fprintf(f, "last_p_value        : %.6f\n", dd->last_p_value);
+    fprintf(f, "last_growth_rate    : %.4f\n", dd->last_growth_rate);
+    fprintf(f, "jerk_history_len    : %u\n", dd->jerk_history_len);
+    fprintf(f, "mean_jerk_len       : %u\n", dd->mean_jerk_len);
+    fprintf(f, "stopped_early       : %d\n", dd->stopped_early ? 1 : 0);
+    fprintf(f, "iteration           : %" PRIu64 "\n", dd->iteration);
+
+    fclose(f);
 }

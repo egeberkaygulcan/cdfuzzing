@@ -1,0 +1,34 @@
+WORKDIR=/users/eldarfin/experiment_results/seed_1
+REPEAT=1
+TIMEOUT=24h
+POLL=5
+CACHE_ON_DISK=1
+NO_ARCHIVE=1
+MAGMA=/users/eldarfin/cdfuzzing/magma
+
+FUZZERS=(afl aflcd aflfast aflfastcd moptafl moptaflcd aflplusplus aflpluspluscd fairfuzz fairfuzzcd honggfuzz honggfuzzcd)
+
+afl_TARGETS=(sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl)
+aflcd_TARGETS=(sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl)
+aflfast_TARGETS=(sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl)
+aflfastcd_TARGETS=(sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl)
+moptafl_TARGETS=(sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl)
+moptaflcd_TARGETS=(sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl)
+aflplusplus_TARGETS=(sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl)
+aflpluspluscd_TARGETS=(sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl)
+fairfuzz_TARGETS=(sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl)
+fairfuzzcd_TARGETS=(sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl)
+honggfuzz_TARGETS=(sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl)
+honggfuzzcd_TARGETS=(sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl)
+
+# CD variant parameters (applied via start.sh env passthrough)
+export AFL_DRIFT_WINDOW=100
+export AFL_DRIFT_THRESHOLD=0.05
+export AFL_DRIFT_SOFT_RESET=2
+export AFL_DRIFT_MAX_RESETS=0
+export AFL_DRIFT_HAVOC_BOOST=2
+export AFL_DRIFT_BOOST_CYCLES=1
+export AFL_DRIFT_COOLDOWN=10
+export AFL_DRIFT_CONSECUTIVE=5
+export AFL_DRIFT_EMA_ALPHA=0.1
+export AFL_DRIFT_STAGNATION_FACTOR=0.5
