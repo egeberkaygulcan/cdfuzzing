@@ -243,3 +243,7 @@ plots*/
 # Experiment summary docs (auto-generated)
 EXPERIMENT_SUMMARY.md
 magma/tools/captain/EXPERIMENT_SUMMARY.md
+
+# Preserved experiment data
+preserved_experiments/
+preserved_experiments.tar.gz
