@@ -2,7 +2,7 @@
  * honggfuzz - concept drift detection implementation
  * ---------------------------------------------------
  *
- * Concept drift detection with jerk tracking.
+ * Concept drift detection.
  * Matches EarlyStopFuzzer/MeanJerkFuzzer implementation from bits.ipynb.
  *
  * Adapted for honggfuzz: uses util_Calloc/util_Realloc/free,
@@ -83,47 +83,18 @@ drift_detector_t* drift_init(const char* output_dir) {
 
     dd->reset_on_drift = true;   /* Always on */
 
-    /* Jerk tracking parameters */
-    env_val = getenv("AFL_METRICS_WINDOW");
-    dd->metrics_window_size = env_val ? (uint32_t)atoi(env_val) : 100;
-
-    env_val = getenv("AFL_JERK_WINDOW");
-    dd->jerk_window_size = env_val ? (uint32_t)atoi(env_val) : 1000;
-
-    env_val = getenv("AFL_MEAN_JERK_WINDOW");
-    dd->mean_jerk_window = env_val ? (uint32_t)atoi(env_val) : 100;
-
-    dd->stop_on_jerk_drift = false;  /* Always off — detect-and-log only */
-
     /* Allocate history buffers */
     dd->history_capacity = 20000;
     dd->value_history = (uint64_t*)util_Calloc(dd->history_capacity * sizeof(uint64_t));
     dd->coverage_rate_history = (double*)util_Calloc(dd->history_capacity * sizeof(double));
     dd->history_len = 0;
 
-    /* Jerk tracking buffers */
-    dd->jerk_history_capacity = 20000;
-    dd->sliding_jerk_history = (double*)util_Calloc(dd->jerk_history_capacity * sizeof(double));
-    dd->jerk_history_len = 0;
-
-    dd->mean_jerk_capacity = 1000;
-    dd->mean_jerk_history = (double*)util_Calloc(dd->mean_jerk_capacity * sizeof(double));
-    dd->mean_jerk_len = 0;
-
     /* Init statistics */
     dd->drift_count       = 0;
     dd->reset_count       = 0;
-    dd->jerk_drift_count  = 0;
-    dd->stopped_early     = false;
-    dd->stop_iteration    = 0;
     dd->last_queued_paths = 0;
     dd->last_coverage     = 0;
     dd->iteration         = 0;
-
-    dd->jerk_drift_detected   = false;
-    dd->jerk_drift_iteration  = 0;
-    dd->jerk_drift_time_ms    = 0;
-    dd->jerk_drift_coverage   = 0;
 
     dd->corpus_reset_count            = 0;
     dd->first_corpus_reset_iteration  = 0;
@@ -154,20 +125,17 @@ drift_detector_t* drift_init(const char* output_dir) {
         snprintf(csv_path, sizeof(csv_path), "%s/drift_log.csv", output_dir);
         dd->csv_file = fopen(csv_path, "w");
         if (dd->csv_file) {
-            fprintf(dd->csv_file, "minute,iterations,queued_paths,coverage,p_value,growth_rate,ema_growth,stagnation_thresh,consecutive_drifts,cooldown_remaining,reset_count,drift_count,jerk_drift_count\n");
-            fprintf(dd->csv_file, "0,0,0,0,-1,0,0,0,0,0,0,0,0\n");
+            fprintf(dd->csv_file, "minute,iterations,queued_paths,coverage,p_value,growth_rate,ema_growth,stagnation_thresh,consecutive_drifts,cooldown_remaining,reset_count,drift_count\n");
+            fprintf(dd->csv_file, "0,0,0,0,-1,0,0,0,0,0,0,0\n");
             fflush(dd->csv_file);
         } else {
             LOG_W("Could not create drift CSV at '%s': %s", csv_path, strerror(errno));
         }
     }
 
-    LOG_I("Drift detection with jerk tracking enabled:");
+    LOG_I("Drift detection enabled:");
     LOG_I("  Value drift: window=%u, threshold=%.3f, reset=%s",
           dd->window_size, dd->drift_threshold, dd->reset_on_drift ? "ON" : "OFF");
-    LOG_I("  Jerk tracking: window=%u, mean_jerk_window=%u",
-          dd->jerk_window_size, dd->mean_jerk_window);
-    LOG_I("  Early stop on jerk drift: %s", dd->stop_on_jerk_drift ? "YES" : "NO");
 
     return dd;
 }
@@ -179,10 +147,6 @@ void drift_destroy(drift_detector_t* dd) {
 
     LOG_I("Drift detection summary:");
     LOG_I("  Value drifts: %u, Resets: %u", dd->drift_count, dd->reset_count);
-    LOG_I("  Jerk drifts: %u", dd->jerk_drift_count);
-    if (dd->stopped_early) {
-        LOG_I("  Early stop at iteration: %" PRIu64, dd->stop_iteration);
-    }
 
     if (dd->csv_file) {
         fclose(dd->csv_file);
@@ -191,8 +155,6 @@ void drift_destroy(drift_detector_t* dd) {
 
     free(dd->value_history);
     free(dd->coverage_rate_history);
-    free(dd->sliding_jerk_history);
-    free(dd->mean_jerk_history);
     free(dd);
 }
 
@@ -220,61 +182,6 @@ void drift_update(drift_detector_t* dd, uint64_t current_iter,
     dd->history_len++;
     dd->last_queued_paths = queued_paths;
     dd->last_coverage     = coverage;
-}
-
-/* ---------- Jerk calculation ---------- */
-
-void drift_calculate_jerk(drift_detector_t* dd, uint64_t current_iter) {
-    (void)current_iter;
-    if (!dd) return;
-    if (dd->history_len < dd->jerk_window_size) return;
-
-    if (dd->jerk_history_len >= dd->jerk_history_capacity) {
-        dd->jerk_history_capacity *= 2;
-        dd->sliding_jerk_history = (double*)util_Realloc(
-            dd->sliding_jerk_history, dd->jerk_history_capacity * sizeof(double));
-    }
-
-    uint32_t window_start = dd->history_len - dd->jerk_window_size;
-    uint64_t coverage_start = dd->value_history[window_start];
-    uint64_t coverage_end   = dd->value_history[dd->history_len - 1];
-    double velocity = (double)(coverage_end - coverage_start) / dd->jerk_window_size;
-
-    if (dd->jerk_history_len < 1) {
-        dd->sliding_jerk_history[dd->jerk_history_len++] = 0.0;
-        return;
-    }
-
-    if (dd->history_len > dd->jerk_window_size + 1) {
-        uint32_t prev_window_start = window_start - 1;
-        if (prev_window_start >= dd->jerk_window_size) {
-            uint64_t prev_coverage_start = dd->value_history[prev_window_start - dd->jerk_window_size];
-            uint64_t prev_coverage_end   = dd->value_history[prev_window_start];
-            double prev_velocity = (double)(prev_coverage_end - prev_coverage_start) / dd->jerk_window_size;
-            double acceleration = velocity - prev_velocity;
-            dd->sliding_jerk_history[dd->jerk_history_len++] = acceleration;
-        }
-    }
-}
-
-/* ---------- Mean jerk recording ---------- */
-
-void drift_record_mean_jerk(drift_detector_t* dd) {
-    if (!dd) return;
-    if (dd->jerk_history_len < dd->mean_jerk_window) return;
-
-    if (dd->mean_jerk_len >= dd->mean_jerk_capacity) {
-        dd->mean_jerk_capacity *= 2;
-        dd->mean_jerk_history = (double*)util_Realloc(
-            dd->mean_jerk_history, dd->mean_jerk_capacity * sizeof(double));
-    }
-
-    uint32_t start_idx = dd->jerk_history_len >= dd->mean_jerk_window
-        ? dd->jerk_history_len - dd->mean_jerk_window : 0;
-    uint32_t count = dd->jerk_history_len - start_idx;
-
-    double mean_jerk = gsl_stats_mean(dd->sliding_jerk_history + start_idx, 1, count);
-    dd->mean_jerk_history[dd->mean_jerk_len++] = mean_jerk;
 }
 
 /* ---------- Coverage rate check ---------- */
@@ -346,51 +253,6 @@ bool drift_check_value(drift_detector_t* dd, uint64_t current_iter) {
     return false;
 }
 
-/* ---------- Jerk drift check ---------- */
-
-bool drift_check_jerk(drift_detector_t* dd, uint64_t current_iter) {
-    if (!dd) return false;
-    if (dd->mean_jerk_len < 20) return false;
-
-    uint32_t half_point = dd->mean_jerk_len / 2;
-    if (half_point < 2) return false;
-
-    double* previous_jerks = dd->mean_jerk_history;
-    double* current_jerks  = dd->mean_jerk_history + half_point;
-    uint32_t current_len   = dd->mean_jerk_len - half_point;
-
-    double p_value = ks_test_two_sample(previous_jerks, half_point,
-                                         current_jerks, current_len);
-
-    if (p_value < dd->drift_threshold) {
-        dd->jerk_drift_count++;
-
-        double mean_prev = gsl_stats_mean(previous_jerks, 1, half_point);
-        double mean_curr = gsl_stats_mean(current_jerks, 1, current_len);
-
-        LOG_I("JERK DRIFT detected at iter %" PRIu64 " | p-value: %.4f",
-              current_iter, p_value);
-        LOG_I("  Mean jerk: %.3f -> %.3f", mean_prev, mean_curr);
-
-        if (dd->stop_on_jerk_drift) {
-            dd->stopped_early    = true;
-            dd->stop_iteration   = current_iter;
-            LOG_W("EARLY STOP triggered at iteration %" PRIu64, current_iter);
-        }
-
-        return true;
-    }
-
-    return false;
-}
-
-/* ---------- Early stop check ---------- */
-
-bool drift_should_stop(drift_detector_t* dd) {
-    if (!dd || !dd->stop_on_jerk_drift) return false;
-    return dd->stopped_early;
-}
-
 /* ---------- CSV update ---------- */
 
 void drift_csv_update(drift_detector_t* dd, uint64_t current_iter,
@@ -403,7 +265,7 @@ void drift_csv_update(drift_detector_t* dd, uint64_t current_iter,
     dd->csv_minute++;
     dd->csv_last_update_ms = elapsed_ms;
 
-    fprintf(dd->csv_file, "%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.6f,%.4f,0,0,%u,%u,%u,%u,%u\n",
+    fprintf(dd->csv_file, "%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.6f,%.4f,0,0,%u,%u,%u,%u\n",
             dd->csv_minute,
             current_iter,
             corpus,
@@ -413,8 +275,7 @@ void drift_csv_update(drift_detector_t* dd, uint64_t current_iter,
             dd->consecutive_drifts,
             dd->cooldown_remaining,
             dd->corpus_reset_count,
-            dd->drift_count,
-            dd->jerk_drift_count);
+            dd->drift_count);
     fflush(dd->csv_file);
 
     /* Write human-readable stats file alongside CSV */
@@ -487,8 +348,6 @@ void drift_perform_corpus_reset(drift_detector_t* dd, honggfuzz_t* hfuzz) {
 
     /* Clear drift history so detector needs fresh data before re-triggering */
     dd->history_len = 0;
-    dd->jerk_history_len = 0;
-    dd->mean_jerk_len = 0;
 }
 
 /* Write human-readable diagnostic stats file */
@@ -508,12 +367,8 @@ void drift_write_stats_file(drift_detector_t* dd, const char* out_dir,
     fprintf(f, "drift_count         : %u\n", dd->drift_count);
     fprintf(f, "reset_count         : %u\n", dd->reset_count);
     fprintf(f, "corpus_resets       : %u\n", dd->corpus_reset_count);
-    fprintf(f, "jerk_drift_count    : %u\n", dd->jerk_drift_count);
     fprintf(f, "last_p_value        : %.6f\n", dd->last_p_value);
     fprintf(f, "last_growth_rate    : %.4f\n", dd->last_growth_rate);
-    fprintf(f, "jerk_history_len    : %u\n", dd->jerk_history_len);
-    fprintf(f, "mean_jerk_len       : %u\n", dd->mean_jerk_len);
-    fprintf(f, "stopped_early       : %d\n", dd->stopped_early ? 1 : 0);
     fprintf(f, "iteration           : %" PRIu64 "\n", dd->iteration);
 
     fclose(f);

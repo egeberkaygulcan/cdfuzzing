@@ -282,18 +282,6 @@ static void driftCycle(honggfuzz_t* hfuzz) {
     /* Update history */
     drift_update(drift_det, mutations, corpus, coverage);
 
-    /* Calculate jerk every jerk_window_size iterations */
-    if (mutations >= drift_det->jerk_window_size &&
-        mutations % drift_det->jerk_window_size == 0) {
-        drift_calculate_jerk(drift_det, mutations);
-    }
-
-    /* Record mean jerk every mean_jerk_window iterations */
-    if (drift_det->jerk_history_len >= drift_det->mean_jerk_window &&
-        mutations % drift_det->mean_jerk_window == 0) {
-        drift_record_mean_jerk(drift_det);
-    }
-
     /* Check for value drift every window_size iterations */
     if (mutations >= drift_det->window_size &&
         mutations % drift_det->window_size == 0) {
@@ -306,22 +294,6 @@ static void driftCycle(honggfuzz_t* hfuzz) {
                 drift_perform_corpus_reset(drift_det, hfuzz);
                 LOG_I("Resuming fuzzing from initial seeds...");
             }
-        }
-    }
-
-    /* Check for jerk drift (one-shot) */
-    if (!drift_det->jerk_drift_detected &&
-        drift_det->mean_jerk_len >= 20 &&
-        mutations % drift_det->mean_jerk_window == 0) {
-
-        if (drift_check_jerk(drift_det, mutations)) {
-            drift_det->jerk_drift_detected  = true;
-            drift_det->jerk_drift_iteration = mutations;
-            drift_det->jerk_drift_time_ms   = elapsed_ms;
-            drift_det->jerk_drift_coverage  = coverage;
-            LOG_I("Jerk drift detected at iter %" PRIu64 " (%.2f sec, coverage: %" PRIu64 " edges)!",
-                  mutations, elapsed_ms / 1000.0, coverage);
-            LOG_I("Continuing fuzzing with jerk drift detection disabled...");
         }
     }
 

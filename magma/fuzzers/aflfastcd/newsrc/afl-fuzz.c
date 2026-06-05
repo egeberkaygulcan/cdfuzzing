@@ -115,10 +115,6 @@ enum {
 #ifdef AFL_DRIFT_DETECT
 static struct drift_detector* drift_det = NULL;  /* Drift detection state */
 static u64 drift_iteration = 0;                   /* Iteration counter for drift */
-static u8 jerk_drift_detected = 0;                /* Jerk drift was detected? */
-static u64 jerk_drift_iteration = 0;              /* Iteration when jerk drift detected */
-static u64 jerk_drift_time = 0;                   /* Time (ms) when jerk drift detected */
-static u32 jerk_drift_coverage = 0;               /* Coverage when jerk drift detected */
 static u32 corpus_reset_count = 0;                /* Number of corpus resets performed */
 static u64 first_corpus_reset_iteration = 0;      /* First corpus reset iteration */
 static u64 first_corpus_reset_time = 0;           /* First corpus reset time (ms) */
@@ -1232,8 +1228,8 @@ static void drift_csv_init(void) {
   if (!drift_csv_file) PFATAL("Unable to create '%s'", fn);
   ck_free(fn);
 
-  fprintf(drift_csv_file, "minute,iterations,queued_paths,coverage,p_value,growth_rate,ema_growth,stagnation_thresh,consecutive_drifts,cooldown_remaining,reset_count,drift_count,jerk_drift_count\n");
-  fprintf(drift_csv_file, "0,0,0,0,-1,0,0,0,0,0,0,0,0\n");
+  fprintf(drift_csv_file, "minute,iterations,queued_paths,coverage,p_value,growth_rate,ema_growth,stagnation_thresh,consecutive_drifts,cooldown_remaining,reset_count,drift_count\n");
+  fprintf(drift_csv_file, "0,0,0,0,-1,0,0,0,0,0,0,0\n");
   fflush(drift_csv_file);
 
   drift_csv_last_update = get_cur_time();
@@ -1265,8 +1261,7 @@ static void drift_csv_update(u64 current_iter, u32 current_coverage, u32 cur_que
           drift_det ? drift_det->consecutive_drifts : 0,
           drift_det ? drift_det->cooldown_remaining : 0,
           corpus_reset_count,
-          drift_det ? drift_det->drift_count : 0,
-          drift_det ? drift_det->jerk_drift_count : 0);
+          drift_det ? drift_det->drift_count : 0);
   fflush(drift_csv_file);
 
   /* Write human-readable stats file alongside CSV */
@@ -8653,19 +8648,7 @@ int main(int argc, char** argv) {
       u32 current_coverage = count_non_255_bytes(virgin_bits);
       drift_update(drift_det, drift_iteration, queued_paths, current_coverage);
 
-      /* Calculate jerk every jerk_window_size iterations */
-      if (drift_iteration >= drift_det->jerk_window_size &&
-          drift_iteration % drift_det->jerk_window_size == 0) {
-        drift_calculate_jerk(drift_det, drift_iteration);
-      }
-
-      /* Record mean jerk every mean_jerk_window iterations */
-      if (drift_det->jerk_history_len >= drift_det->mean_jerk_window &&
-          drift_iteration % drift_det->mean_jerk_window == 0) {
-        drift_record_mean_jerk(drift_det);
-      }
-
-      /* Check for value drift every window_size iterations */
+/* Check for value drift every window_size iterations */
       if (drift_iteration >= drift_det->window_size &&
           drift_iteration % drift_det->window_size == 0) {
 
@@ -8676,22 +8659,6 @@ int main(int argc, char** argv) {
           WARNF("Performing corpus reset...");
           perform_corpus_reset();
           ACTF("Resuming fuzzing from initial seeds...");
-        }
-      }
-
-      /* Check for jerk drift when we have enough samples (only if not detected yet) */
-      if (!jerk_drift_detected &&
-          drift_det->mean_jerk_len >= 20 &&
-          drift_iteration % drift_det->mean_jerk_window == 0) {
-
-        if (drift_check_jerk(drift_det, drift_iteration)) {
-          jerk_drift_detected = 1;
-          jerk_drift_iteration = drift_iteration;
-          jerk_drift_time = get_cur_time() - start_time;
-          jerk_drift_coverage = current_coverage;
-          ACTF("Jerk drift detected at iteration %llu (%.2f sec, coverage: %u edges)!",
-               drift_iteration, jerk_drift_time / 1000.0, current_coverage);
-          ACTF("Continuing fuzzing with jerk drift detection disabled...");
         }
       }
 
@@ -8725,37 +8692,21 @@ stop_fuzzing:
 
 #ifdef AFL_DRIFT_DETECT
   /* Report drift detection events if they occurred */
-  if (corpus_reset_count > 0 || jerk_drift_detected) {
-    u32 final_coverage = count_non_255_bytes(virgin_bits);
+  if (corpus_reset_count > 0) {
     u64 total_time = get_cur_time() - start_time;
 
     SAYF("\n" cYEL "[*] Drift Detection Summary" cRST "\n");
-
-    if (corpus_reset_count > 0) {
-      SAYF("    Corpus resets performed: %u\n", corpus_reset_count);
-      SAYF("    First reset at iteration %llu (%.2f sec / %.2f min)\n",
-           first_corpus_reset_iteration,
-           first_corpus_reset_time / 1000.0,
-           first_corpus_reset_time / 60000.0);
-      if (corpus_reset_count > 1) {
-        SAYF("    Last reset at iteration %llu (%.2f sec / %.2f min)\n",
-             last_corpus_reset_iteration,
-             last_corpus_reset_time / 1000.0,
-             last_corpus_reset_time / 60000.0);
-      }
+    SAYF("    Corpus resets performed: %u\n", corpus_reset_count);
+    SAYF("    First reset at iteration %llu (%.2f sec / %.2f min)\n",
+         first_corpus_reset_iteration,
+         first_corpus_reset_time / 1000.0,
+         first_corpus_reset_time / 60000.0);
+    if (corpus_reset_count > 1) {
+      SAYF("    Last reset at iteration %llu (%.2f sec / %.2f min)\n",
+           last_corpus_reset_iteration,
+           last_corpus_reset_time / 1000.0,
+           last_corpus_reset_time / 60000.0);
     }
-
-    if (jerk_drift_detected) {
-      SAYF("    Jerk drift detected at iteration %llu (%.2f sec / %.2f min)\n",
-           jerk_drift_iteration,
-           jerk_drift_time / 1000.0,
-           jerk_drift_time / 60000.0);
-      SAYF("    Coverage at jerk drift: %u edges\n", jerk_drift_coverage);
-      SAYF("    Final coverage: %u edges\n", final_coverage);
-      SAYF("    Coverage gained after jerk drift: %d edges\n",
-           (s32)final_coverage - (s32)jerk_drift_coverage);
-    }
-
     SAYF("    Total runtime: %.2f sec / %.2f min\n",
          total_time / 1000.0, total_time / 60000.0);
   }

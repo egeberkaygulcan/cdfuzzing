@@ -50,3 +50,12 @@ cp "$FUZZER/newsrc/afl-drift-detect.h"  "$FUZZER/repo/include/afl-drift-detect.h
 cp "$FUZZER/newsrc/afl-fuzz-drift.c"    "$FUZZER/repo/src/afl-fuzz-drift.c"
 cp "$FUZZER/newsrc/afl-fuzz.c"          "$FUZZER/repo/src/afl-fuzz.c"
 cp "$FUZZER/newsrc/GNUmakefile"         "$FUZZER/repo/GNUmakefile"
+
+# Bug 3 fix: splice-loop disabled check.
+# afl-fuzz-one.c has 5 do-while splice target selection loops using
+# rand_below(afl, afl->queued_paths). The rejection condition did not check
+# ->disabled, so corpus-reset'd (deleted) entries could be selected as splice
+# sources -> open(fname) -> ENOENT -> PFATAL -> campaign death.
+# The substring "afl->queue_buf[tid]->len < 4)" is unique to all 5 sites.
+sed -i 's/afl->queue_buf\[tid\]->len < 4)/afl->queue_buf[tid]->len < 4 || afl->queue_buf[tid]->disabled)/g' \
+    "$FUZZER/repo/src/afl-fuzz-one.c"

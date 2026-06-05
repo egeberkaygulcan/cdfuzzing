@@ -2,7 +2,7 @@
    american fuzzy lop++ - drift detection module
    ----------------------------------------------
 
-   Concept drift detection with jerk tracking for AFL++.
+   Concept drift detection for AFL++.
    Self-contained module: all drift logic, CSV logging, and corpus reset.
 
    This file is automatically included via the GNUmakefile wildcard
@@ -29,10 +29,6 @@
 
 static struct drift_detector *drift_det       = NULL;
 static u64  drift_iteration                   = 0;
-static u8   jerk_drift_detected               = 0;
-static u64  jerk_drift_iteration              = 0;
-static u64  jerk_drift_time                   = 0;
-static u32  jerk_drift_coverage               = 0;
 static u32  corpus_reset_count                = 0;
 static u64  first_corpus_reset_iteration      = 0;
 static u64  first_corpus_reset_time           = 0;
@@ -138,43 +134,20 @@ struct drift_detector *drift_init(void) {
   dd->growth_ema = 0.0;
   dd->ema_initialized = 0;
 
-  env_val = getenv("AFL_METRICS_WINDOW");
-  dd->metrics_window_size = env_val ? atoi(env_val) : 100;
-
-  env_val = getenv("AFL_JERK_WINDOW");
-  dd->jerk_window_size = env_val ? atoi(env_val) : 1000;
-
-  env_val = getenv("AFL_MEAN_JERK_WINDOW");
-  dd->mean_jerk_window = env_val ? atoi(env_val) : 100;
-
-  env_val = getenv("AFL_STOP_ON_JERK_DRIFT");
-  dd->stop_on_jerk_drift = 0;  /* detect-and-log only */
-
   dd->history_capacity    = 20000;
   dd->value_history       = ck_alloc(dd->history_capacity * sizeof(u64));
   dd->coverage_rate_history = ck_alloc(dd->history_capacity * sizeof(double));
   dd->history_len         = 0;
 
-  dd->jerk_history_capacity  = 20000;
-  dd->sliding_jerk_history   = ck_alloc(dd->jerk_history_capacity * sizeof(double));
-  dd->jerk_history_len       = 0;
-
-  dd->mean_jerk_capacity = 1000;
-  dd->mean_jerk_history  = ck_alloc(dd->mean_jerk_capacity * sizeof(double));
-  dd->mean_jerk_len      = 0;
-
   dd->drift_count       = 0;
   dd->reset_count        = 0;
-  dd->jerk_drift_count   = 0;
-  dd->stopped_early      = 0;
-  dd->stop_iteration     = 0;
   dd->last_queued_paths  = 0;
   dd->last_coverage      = 0;
   dd->last_p_value       = -1.0;
   dd->last_growth_rate   = 0.0;
   dd->last_stagnation_thresh = 0.0;
 
-  SAYF(cGRN "[+] " cRST "Drift detection with jerk tracking enabled:\n");
+  SAYF(cGRN "[+] " cRST "Drift detection enabled:\n");
   SAYF("    Value drift: window=%u, threshold=%.3f, reset=%s\n",
        dd->window_size, dd->drift_threshold,
        dd->reset_on_drift ? "ON" : "OFF");
@@ -182,10 +155,6 @@ struct drift_detector *drift_init(void) {
        dd->cooldown, dd->consecutive_required);
   SAYF("    Adaptive stagnation: ema_alpha=%.2f, stag_factor=%.2f\n",
        dd->ema_alpha, dd->stagnation_factor);
-  SAYF("    Jerk tracking: window=%u, mean_jerk_window=%u\n",
-       dd->jerk_window_size, dd->mean_jerk_window);
-  SAYF("    Early stop on jerk drift: %s\n",
-       dd->stop_on_jerk_drift ? "YES" : "NO");
 
   return dd;
 
@@ -198,8 +167,6 @@ struct drift_detector *drift_init(void) {
 void drift_reset_history(struct drift_detector *dd) {
   if (!dd) return;
   dd->history_len = 0;
-  dd->jerk_history_len = 0;
-  dd->mean_jerk_len = 0;
   dd->consecutive_drifts = 0;
   dd->cooldown_remaining = dd->cooldown;
 }
@@ -214,18 +181,9 @@ void drift_destroy(struct drift_detector *dd) {
 
   SAYF(cGRN "\n[+] " cRST "Drift detection summary:\n");
   SAYF("    Value drifts: %u, Resets: %u\n", dd->drift_count, dd->reset_count);
-  SAYF("    Jerk drifts: %u\n", dd->jerk_drift_count);
-  if (dd->stopped_early) {
-
-    SAYF("    Early stop at iteration: %llu\n",
-         (unsigned long long)dd->stop_iteration);
-
-  }
 
   ck_free(dd->value_history);
   ck_free(dd->coverage_rate_history);
-  ck_free(dd->sliding_jerk_history);
-  ck_free(dd->mean_jerk_history);
   ck_free(dd);
 
 }
@@ -259,86 +217,6 @@ void drift_update(struct drift_detector *dd, u64 current_iter,
   dd->history_len++;
   dd->last_queued_paths = queued_paths;
   dd->last_coverage     = coverage;
-
-}
-
-/* ================================================================
-   drift_calculate_jerk  (mirrors calculate_sliding_jerk)
-   ================================================================ */
-
-void drift_calculate_jerk(struct drift_detector *dd, u64 current_iter) {
-
-  if (!dd) return;
-  if (dd->history_len < dd->jerk_window_size) return;
-
-  if (dd->jerk_history_len >= dd->jerk_history_capacity) {
-
-    dd->jerk_history_capacity *= 2;
-    dd->sliding_jerk_history =
-        ck_realloc(dd->sliding_jerk_history,
-                   dd->jerk_history_capacity * sizeof(double));
-
-  }
-
-  u32 window_start  = dd->history_len - dd->jerk_window_size;
-  u64 coverage_start = dd->value_history[window_start];
-  u64 coverage_end   = dd->value_history[dd->history_len - 1];
-  double velocity    = (double)(coverage_end - coverage_start) /
-                       dd->jerk_window_size;
-
-  if (dd->jerk_history_len < 1) {
-
-    dd->sliding_jerk_history[dd->jerk_history_len++] = 0.0;
-    return;
-
-  }
-
-  if (dd->history_len > dd->jerk_window_size + 1) {
-
-    u32 prev_window_start = window_start - 1;
-    if (prev_window_start >= dd->jerk_window_size) {
-
-      u64 prev_coverage_start =
-          dd->value_history[prev_window_start - dd->jerk_window_size];
-      u64 prev_coverage_end = dd->value_history[prev_window_start];
-      double prev_velocity  = (double)(prev_coverage_end - prev_coverage_start) /
-                              dd->jerk_window_size;
-      double acceleration = velocity - prev_velocity;
-
-      dd->sliding_jerk_history[dd->jerk_history_len++] = acceleration;
-
-    }
-
-  }
-
-}
-
-/* ================================================================
-   drift_record_mean_jerk  (mirrors record_mean_jerk)
-   ================================================================ */
-
-void drift_record_mean_jerk(struct drift_detector *dd) {
-
-  if (!dd) return;
-  if (dd->jerk_history_len < dd->mean_jerk_window) return;
-
-  if (dd->mean_jerk_len >= dd->mean_jerk_capacity) {
-
-    dd->mean_jerk_capacity *= 2;
-    dd->mean_jerk_history =
-        ck_realloc(dd->mean_jerk_history,
-                   dd->mean_jerk_capacity * sizeof(double));
-
-  }
-
-  u32 start_idx = dd->jerk_history_len >= dd->mean_jerk_window
-                      ? dd->jerk_history_len - dd->mean_jerk_window
-                      : 0;
-  u32 count = dd->jerk_history_len - start_idx;
-
-  double mean_jerk =
-      gsl_stats_mean(dd->sliding_jerk_history + start_idx, 1, count);
-  dd->mean_jerk_history[dd->mean_jerk_len++] = mean_jerk;
 
 }
 
@@ -472,65 +350,6 @@ u8 drift_check_value(struct drift_detector *dd, u64 current_iter) {
 }
 
 /* ================================================================
-   drift_check_jerk  (mirrors detect_jerk_drift from MeanJerkFuzzer)
-   ================================================================ */
-
-u8 drift_check_jerk(struct drift_detector *dd, u64 current_iter) {
-
-  if (!dd) return 0;
-  if (dd->mean_jerk_len < 20) return 0;
-
-  u32 half_point = dd->mean_jerk_len / 2;
-  if (half_point < 2) return 0;
-
-  double *previous_jerks = dd->mean_jerk_history;
-  double *current_jerks  = dd->mean_jerk_history + half_point;
-  u32 current_len        = dd->mean_jerk_len - half_point;
-
-  double p_value = ks_test_two_sample(previous_jerks, half_point,
-                                      current_jerks, current_len);
-
-  if (p_value < dd->drift_threshold) {
-
-    dd->jerk_drift_count++;
-
-    double mean_prev = gsl_stats_mean(previous_jerks, 1, half_point);
-    double mean_curr = gsl_stats_mean(current_jerks, 1, current_len);
-
-    SAYF(cYEL "\n[!] " cRST
-         "JERK DRIFT detected at iter %llu | p-value: %.4f\n",
-         (unsigned long long)current_iter, p_value);
-    SAYF("    Mean jerk: %.6f -> %.6f\n", mean_prev, mean_curr);
-
-    if (dd->stop_on_jerk_drift) {
-
-      dd->stopped_early    = 1;
-      dd->stop_iteration   = current_iter;
-      SAYF(cLRD "\n[!] EARLY STOP triggered at iteration %llu\n" cRST,
-           (unsigned long long)current_iter);
-
-    }
-
-    return 1;
-
-  }
-
-  return 0;
-
-}
-
-/* ================================================================
-   drift_should_stop
-   ================================================================ */
-
-u8 drift_should_stop(struct drift_detector *dd) {
-
-  if (!dd || !dd->stop_on_jerk_drift) return 0;
-  return dd->stopped_early;
-
-}
-
-/* ================================================================
    drift_write_stats  (human-readable diagnostic file)
    ================================================================ */
 
@@ -555,16 +374,12 @@ void drift_write_stats(struct drift_detector *dd, u8 *out_dir,
   fprintf(f, "drift_count         : %u\n", dd->drift_count);
   fprintf(f, "reset_count         : %u\n", dd->reset_count);
   fprintf(f, "corpus_resets       : %u\n", corpus_resets);
-  fprintf(f, "jerk_drift_count    : %u\n", dd->jerk_drift_count);
   fprintf(f, "consecutive_drifts  : %u\n", dd->consecutive_drifts);
   fprintf(f, "cooldown_remaining  : %u\n", dd->cooldown_remaining);
   fprintf(f, "growth_ema          : %.4f\n", dd->growth_ema);
   fprintf(f, "last_p_value        : %.6f\n", dd->last_p_value);
   fprintf(f, "last_growth_rate    : %.4f\n", dd->last_growth_rate);
   fprintf(f, "last_stagnation_thr : %.4f\n", dd->last_stagnation_thresh);
-  fprintf(f, "jerk_history_len    : %u\n", dd->jerk_history_len);
-  fprintf(f, "mean_jerk_len       : %u\n", dd->mean_jerk_len);
-  fprintf(f, "stopped_early       : %u\n", dd->stopped_early);
 
   fclose(f);
   ck_free(fn);
@@ -603,6 +418,8 @@ static void perform_corpus_reset(afl_state_t *afl) {
     }
 
     q->disabled = 1;
+    q->weight = 0;       /* Bug 1 fix: prevent degenerate alias table */
+    q->perf_score = 0;   /* Bug 1 fix: alias table uses raw weight for disabled entries */
     removed_count++;
 
   }
@@ -624,6 +441,20 @@ static void perform_corpus_reset(afl_state_t *afl) {
   last_corpus_reset_time      = reset_time;
 
   afl->reinit_table   = 1;
+
+  /* Bug 2 fix: clear stale top_rated[] pointers to disabled entries.
+     cull_queue() (triggered by score_changed=1) dereferences top_rated[i]->trace_mini
+     which was freed above; sweep before setting score_changed. */
+  for (u32 j = 0; j < afl->fsrv.map_size; j++) {
+
+    if (afl->top_rated[j] && afl->top_rated[j]->disabled) {
+
+      afl->top_rated[j] = NULL;
+
+    }
+
+  }
+
   afl->score_changed  = 1;
 
   ACTF("Corpus reset #%u complete: disabled %u entries, kept %u seeds",
@@ -646,8 +477,8 @@ static void drift_csv_init(afl_state_t *afl) {
   ck_free(fn);
 
   fprintf(drift_csv_file,
-          "minute,iterations,queued_paths,coverage,p_value,growth_rate,ema_growth,stagnation_thresh,consecutive_drifts,cooldown_remaining,reset_count,drift_count,jerk_drift_count\n");
-  fprintf(drift_csv_file, "0,0,0,0,-1,0,0,0,0,0,0,0,0\n");
+          "minute,iterations,queued_paths,coverage,p_value,growth_rate,ema_growth,stagnation_thresh,consecutive_drifts,cooldown_remaining,reset_count,drift_count\n");
+  fprintf(drift_csv_file, "0,0,0,0,-1,0,0,0,0,0,0,0\n");
   fflush(drift_csv_file);
 
   drift_csv_last_update = get_cur_time();
@@ -678,8 +509,7 @@ static void drift_csv_update(u64 current_iter, u32 current_coverage,
           drift_det ? drift_det->consecutive_drifts : 0,
           drift_det ? drift_det->cooldown_remaining : 0,
           corpus_reset_count,
-          drift_det ? drift_det->drift_count : 0,
-          drift_det ? drift_det->jerk_drift_count : 0);
+          drift_det ? drift_det->drift_count : 0);
   fflush(drift_csv_file);
 
 }
@@ -719,22 +549,6 @@ void drift_cycle(afl_state_t *afl) {
   drift_update(drift_det, drift_iteration, afl->queued_paths,
                current_coverage);
 
-  /* Jerk calculation */
-  if (drift_iteration >= drift_det->jerk_window_size &&
-      drift_iteration % drift_det->jerk_window_size == 0) {
-
-    drift_calculate_jerk(drift_det, drift_iteration);
-
-  }
-
-  /* Mean jerk recording */
-  if (drift_det->jerk_history_len >= drift_det->mean_jerk_window &&
-      drift_iteration % drift_det->mean_jerk_window == 0) {
-
-    drift_record_mean_jerk(drift_det);
-
-  }
-
   /* Value drift check */
   if (drift_iteration >= drift_det->window_size &&
       drift_iteration % drift_det->window_size == 0) {
@@ -751,26 +565,6 @@ void drift_cycle(afl_state_t *afl) {
 
   }
 
-  /* Jerk drift check (one-shot) */
-  if (!jerk_drift_detected && drift_det->mean_jerk_len >= 20 &&
-      drift_iteration % drift_det->mean_jerk_window == 0) {
-
-    if (drift_check_jerk(drift_det, drift_iteration)) {
-
-      jerk_drift_detected  = 1;
-      jerk_drift_iteration = drift_iteration;
-      jerk_drift_time      = get_cur_time() - afl->start_time;
-      jerk_drift_coverage  = current_coverage;
-      ACTF("Jerk drift detected at iteration %llu (%.2f sec, coverage: "
-           "%u edges)!",
-           (unsigned long long)drift_iteration,
-           jerk_drift_time / 1000.0, current_coverage);
-      ACTF("Continuing fuzzing with jerk drift detection disabled...");
-
-    }
-
-  }
-
   drift_csv_update(drift_iteration, current_coverage, afl->queued_paths);
 
   /* Write human-readable stats file alongside CSV */
@@ -781,44 +575,24 @@ void drift_cycle(afl_state_t *afl) {
 
 void drift_teardown(afl_state_t *afl) {
 
-  if (corpus_reset_count > 0 || jerk_drift_detected) {
+  if (corpus_reset_count > 0) {
 
-    u32 final_coverage = count_non_255_bytes(afl, afl->virgin_bits);
     u64 total_time     = get_cur_time() - afl->start_time;
 
     SAYF("\n" cYEL "[*] Drift Detection Summary" cRST "\n");
+    SAYF("    Corpus resets performed: %u\n", corpus_reset_count);
+    SAYF("    First reset at iteration %llu (%.2f sec / %.2f min)\n",
+         (unsigned long long)first_corpus_reset_iteration,
+         first_corpus_reset_time / 1000.0,
+         first_corpus_reset_time / 60000.0);
+    if (corpus_reset_count > 1) {
 
-    if (corpus_reset_count > 0) {
-
-      SAYF("    Corpus resets performed: %u\n", corpus_reset_count);
-      SAYF("    First reset at iteration %llu (%.2f sec / %.2f min)\n",
-           (unsigned long long)first_corpus_reset_iteration,
-           first_corpus_reset_time / 1000.0,
-           first_corpus_reset_time / 60000.0);
-      if (corpus_reset_count > 1) {
-
-        SAYF("    Last reset at iteration %llu (%.2f sec / %.2f min)\n",
-             (unsigned long long)last_corpus_reset_iteration,
-             last_corpus_reset_time / 1000.0,
-             last_corpus_reset_time / 60000.0);
-
-      }
+      SAYF("    Last reset at iteration %llu (%.2f sec / %.2f min)\n",
+           (unsigned long long)last_corpus_reset_iteration,
+           last_corpus_reset_time / 1000.0,
+           last_corpus_reset_time / 60000.0);
 
     }
-
-    if (jerk_drift_detected) {
-
-      SAYF("    Jerk drift detected at iteration %llu (%.2f sec / %.2f "
-           "min)\n",
-           (unsigned long long)jerk_drift_iteration,
-           jerk_drift_time / 1000.0, jerk_drift_time / 60000.0);
-      SAYF("    Coverage at jerk drift: %u edges\n", jerk_drift_coverage);
-      SAYF("    Final coverage: %u edges\n", final_coverage);
-      SAYF("    Coverage gained after jerk drift: %d edges\n",
-           (s32)final_coverage - (s32)jerk_drift_coverage);
-
-    }
-
     SAYF("    Total runtime: %.2f sec / %.2f min\n", total_time / 1000.0,
          total_time / 60000.0);
 

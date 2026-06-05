@@ -2,7 +2,7 @@
    american fuzzy lop - drift detection implementation
    ---------------------------------------------------
 
-   Concept drift detection with jerk tracking.
+   Concept drift detection.
    Matches EarlyStopFuzzer implementation from bits.ipynb.
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -116,40 +116,15 @@ struct drift_detector* drift_init(void) {
   dd->growth_ema = 0.0;
   dd->ema_initialized = 0;
   
-  /* Jerk tracking parameters (from MeanJerkFuzzer) */
-  env_val = getenv("AFL_METRICS_WINDOW");
-  dd->metrics_window_size = env_val ? atoi(env_val) : 100;  /* Default: 100 */
-  
-  env_val = getenv("AFL_JERK_WINDOW");
-  dd->jerk_window_size = env_val ? atoi(env_val) : 1000;  /* Default: 1000 */
-  
-  env_val = getenv("AFL_MEAN_JERK_WINDOW");
-  dd->mean_jerk_window = env_val ? atoi(env_val) : 100;  /* Default: 100 */
-  
-  env_val = getenv("AFL_STOP_ON_JERK_DRIFT");
-  dd->stop_on_jerk_drift = 0; //env_val ? atoi(env_val) : 0;  /* Default: disabled */
-  
   /* Allocate history buffers (auto-expand as needed) */
   dd->history_capacity = 20000;
   dd->value_history = ck_alloc(dd->history_capacity * sizeof(u64));
   dd->coverage_rate_history = ck_alloc(dd->history_capacity * sizeof(double));
   dd->history_len = 0;
   
-  /* Allocate jerk tracking buffers (auto-expand as needed) */
-  dd->jerk_history_capacity = 20000;
-  dd->sliding_jerk_history = ck_alloc(dd->jerk_history_capacity * sizeof(double));
-  dd->jerk_history_len = 0;
-  
-  dd->mean_jerk_capacity = 1000;
-  dd->mean_jerk_history = ck_alloc(dd->mean_jerk_capacity * sizeof(double));
-  dd->mean_jerk_len = 0;
-  
   /* Initialize statistics */
   dd->drift_count = 0;
   dd->reset_count = 0;
-  dd->jerk_drift_count = 0;
-  dd->stopped_early = 0;
-  dd->stop_iteration = 0;
   dd->last_queued_paths = 0;
   dd->last_coverage = 0;
   /* Diagnostic state */
@@ -157,17 +132,13 @@ struct drift_detector* drift_init(void) {
   dd->last_growth_rate = 0.0;
   dd->last_stagnation_thresh = 0.0;
   
-  SAYF(cGRN "[+] " cRST "Drift detection with jerk tracking enabled:\n");
+  SAYF(cGRN "[+] " cRST "Drift detection enabled:\n");
   SAYF("    Value drift: window=%u, threshold=%.3f, reset=%s\n",
        dd->window_size, dd->drift_threshold, dd->reset_on_drift ? "ON" : "OFF");
   SAYF("    Cooldown: %u iters, consecutive required: %u\n",
        dd->cooldown, dd->consecutive_required);
   SAYF("    Adaptive stagnation: ema_alpha=%.2f, stag_factor=%.2f\n",
        dd->ema_alpha, dd->stagnation_factor);
-  SAYF("    Jerk tracking: window=%u, mean_jerk_window=%u\n",
-       dd->jerk_window_size, dd->mean_jerk_window);
-  SAYF("    Early stop on jerk drift: %s\n", dd->stop_on_jerk_drift ? "YES" : "NO");
-  
   return dd;
 }
 
@@ -175,8 +146,6 @@ struct drift_detector* drift_init(void) {
 void drift_reset_history(struct drift_detector* dd) {
   if (!dd) return;
   dd->history_len = 0;
-  dd->jerk_history_len = 0;
-  dd->mean_jerk_len = 0;
   dd->consecutive_drifts = 0;
   /* Activate cooldown period after reset */
   dd->cooldown_remaining = dd->cooldown;
@@ -188,15 +157,9 @@ void drift_destroy(struct drift_detector* dd) {
   
   SAYF(cGRN "\n[+] " cRST "Drift detection summary:\n");
   SAYF("    Value drifts: %u, Resets: %u\n", dd->drift_count, dd->reset_count);
-  SAYF("    Jerk drifts: %u\n", dd->jerk_drift_count);
-  if (dd->stopped_early) {
-    SAYF("    Early stop at iteration: %llu\n", dd->stop_iteration);
-  }
   
   ck_free(dd->value_history);
   ck_free(dd->coverage_rate_history);
-  ck_free(dd->sliding_jerk_history);
-  ck_free(dd->mean_jerk_history);
   ck_free(dd);
 }
 
@@ -226,68 +189,6 @@ void drift_update(struct drift_detector* dd, u64 current_iter,
   dd->history_len++;
   dd->last_queued_paths = queued_paths;
   dd->last_coverage = coverage;
-}
-
-/* Calculate sliding jerk (mirrors calculate_sliding_jerk) */
-void drift_calculate_jerk(struct drift_detector* dd, u64 current_iter) {
-  
-  if (!dd) return;
-  if (dd->history_len < dd->jerk_window_size) return;
-  
-  /* Expand jerk buffer if needed */
-  if (dd->jerk_history_len >= dd->jerk_history_capacity) {
-    dd->jerk_history_capacity *= 2;
-    dd->sliding_jerk_history = ck_realloc(dd->sliding_jerk_history,
-                                           dd->jerk_history_capacity * sizeof(double));
-  }
-  
-  /* Calculate velocity: coverage increase over jerk_window */
-  u32 window_start = dd->history_len - dd->jerk_window_size;
-  u64 coverage_start = dd->value_history[window_start];
-  u64 coverage_end = dd->value_history[dd->history_len - 1];
-  double velocity = (double)(coverage_end - coverage_start) / dd->jerk_window_size;
-  
-  /* Need at least 2 velocity measurements for acceleration */
-  if (dd->jerk_history_len < 1) {
-    dd->sliding_jerk_history[dd->jerk_history_len++] = 0.0;
-    return;
-  }
-  
-  /* Calculate acceleration: change in velocity */
-  if (dd->history_len > dd->jerk_window_size + 1) {
-    u32 prev_window_start = window_start - 1;
-    if (prev_window_start >= dd->jerk_window_size) {
-      u64 prev_coverage_start = dd->value_history[prev_window_start - dd->jerk_window_size];
-      u64 prev_coverage_end = dd->value_history[prev_window_start];
-      double prev_velocity = (double)(prev_coverage_end - prev_coverage_start) / dd->jerk_window_size;
-      double acceleration = velocity - prev_velocity;
-      
-      /* Store acceleration as jerk approximation */
-      dd->sliding_jerk_history[dd->jerk_history_len++] = acceleration;
-    }
-  }
-}
-
-/* Record mean jerk (mirrors record_mean_jerk) */
-void drift_record_mean_jerk(struct drift_detector* dd) {
-  
-  if (!dd) return;
-  if (dd->jerk_history_len < dd->mean_jerk_window) return;
-  
-  /* Expand mean jerk buffer if needed */
-  if (dd->mean_jerk_len >= dd->mean_jerk_capacity) {
-    dd->mean_jerk_capacity *= 2;
-    dd->mean_jerk_history = ck_realloc(dd->mean_jerk_history,
-                                        dd->mean_jerk_capacity * sizeof(double));
-  }
-  
-  /* Calculate mean of last mean_jerk_window jerk values */
-  u32 start_idx = dd->jerk_history_len >= dd->mean_jerk_window ?
-                  dd->jerk_history_len - dd->mean_jerk_window : 0;
-  u32 count = dd->jerk_history_len - start_idx;
-  
-  double mean_jerk = gsl_stats_mean(dd->sliding_jerk_history + start_idx, 1, count);
-  dd->mean_jerk_history[dd->mean_jerk_len++] = mean_jerk;
 }
 
 /* Check if coverage rate is increasing (mirrors is_coverage_rate_increasing) */
@@ -414,56 +315,6 @@ u8 drift_check_value(struct drift_detector* dd, u64 current_iter) {
   return 0;  /* No reset needed */
 }
 
-/* Check for jerk drift (mirrors detect_jerk_drift from MeanJerkFuzzer) */
-u8 drift_check_jerk(struct drift_detector* dd, u64 current_iter) {
-  
-  if (!dd) return 0;
-  
-  /* Need at least 20 mean jerk measurements (hardcoded in notebook) */
-  if (dd->mean_jerk_len < 20) return 0;
-  
-  /* Compare first half vs second half of mean jerk history */
-  u32 half_point = dd->mean_jerk_len / 2;
-  if (half_point < 2) return 0;
-  
-  double* previous_jerks = dd->mean_jerk_history;
-  double* current_jerks = dd->mean_jerk_history + half_point;
-  u32 current_len = dd->mean_jerk_len - half_point;
-  
-  /* KS test for mean jerk distribution */
-  double p_value = ks_test_two_sample(previous_jerks, half_point,
-                                       current_jerks, current_len);
-  
-  /* Detect and record drift (but don't reset) */
-  if (p_value < dd->drift_threshold) {
-    dd->jerk_drift_count++;
-    
-    double mean_prev = gsl_stats_mean(previous_jerks, 1, half_point);
-    double mean_curr = gsl_stats_mean(current_jerks, 1, current_len);
-    
-    SAYF(cYEL "\n[!] " cRST "JERK DRIFT detected at iter %llu | p-value: %.4f\n",
-         current_iter, p_value);
-    SAYF("    Mean jerk: %.3f -> %.3f\n", mean_prev, mean_curr);
-    
-    /* Check if should trigger early stop */
-    if (dd->stop_on_jerk_drift) {
-      dd->stopped_early = 1;
-      dd->stop_iteration = current_iter;
-      SAYF(cLRD "\n[!] EARLY STOP triggered at iteration %llu\n" cRST, current_iter);
-    }
-    
-    return 1;  /* Jerk drift detected */
-  }
-  
-  return 0;
-}
-
-/* Check if should trigger early stop */
-u8 drift_should_stop(struct drift_detector* dd) {
-  if (!dd || !dd->stop_on_jerk_drift) return 0;
-  return dd->stopped_early;
-}
-
 /* Write human-readable diagnostic stats file (like AFL's fuzzer_stats) */
 void drift_write_stats(struct drift_detector* dd, u8* out_dir,
                        u64 queued_paths, u32 corpus_resets) {
@@ -486,16 +337,12 @@ void drift_write_stats(struct drift_detector* dd, u8* out_dir,
   fprintf(f, "drift_count         : %u\n", dd->drift_count);
   fprintf(f, "reset_count         : %u\n", dd->reset_count);
   fprintf(f, "corpus_resets       : %u\n", corpus_resets);
-  fprintf(f, "jerk_drift_count    : %u\n", dd->jerk_drift_count);
   fprintf(f, "consecutive_drifts  : %u\n", dd->consecutive_drifts);
   fprintf(f, "cooldown_remaining  : %u\n", dd->cooldown_remaining);
   fprintf(f, "growth_ema          : %.4f\n", dd->growth_ema);
   fprintf(f, "last_p_value        : %.6f\n", dd->last_p_value);
   fprintf(f, "last_growth_rate    : %.4f\n", dd->last_growth_rate);
   fprintf(f, "last_stagnation_thr : %.4f\n", dd->last_stagnation_thresh);
-  fprintf(f, "jerk_history_len    : %u\n", dd->jerk_history_len);
-  fprintf(f, "mean_jerk_len       : %u\n", dd->mean_jerk_len);
-  fprintf(f, "stopped_early       : %u\n", dd->stopped_early);
   
   fclose(f);
   ck_free(fn);
