@@ -3,8 +3,9 @@
 ## Current Goal
 
 Evaluate CD-Fuzzing (concept drift detection integrated into AFL-family fuzzers) on the Magma
-benchmark. Seed 4 experiments are complete for 4 fuzzer pairs. Next logical step is either
-paper writing or a follow-up seed (seed 5) to confirm results with multiple repetitions.
+benchmark. Seed 4 experiments are complete for 4 fuzzer pairs. **Active next step: run the
+distributed CloudLab experiment** (one node per fuzzer×repetition, head-dispatched + merged)
+to get multi-rep results for all 12 fuzzers — see CLOUDLAB.md. This is the work for the new session.
 
 ## Current State
 
@@ -24,16 +25,24 @@ paper writing or a follow-up seed (seed 5) to confirm results with multiple repe
 - Key outputs: `summary_table.txt`, `parameter_eval.txt`, `bug_report.txt`, `reset_report.txt`
 - Coverage line plots, bug bar charts, drift signal plots, reset timing/summary plots
 
+**Distributed CloudLab experiment — SCRIPTS READY, NOT YET RUN**
+- Root `profile.py` (geni-lib) + `cloudlab/{setup-node,worker-run,orchestrate,merge-results}.sh`
+- All syntax-checked; profile.py moved to repo root so CloudLab git discovery finds it
+- `plot_seed4.py` now honors `CDFUZZ_BASE` / `CDFUZZ_OUTDIR` env vars for merged-run analysis
+- Full reference: CLOUDLAB.md. First real instantiation/run is the new session's task.
+
 ## Important Files
 
-- `cdfuzzing/plot_seed4.py`: main analysis script; reads from `~/experiment_results/seed_4/ar/`; outputs to `~/cdfuzzing/plots_seed4/`
-- `cdfuzzing/magma/tools/captain/captainrc_batch2`: captainrc for moptafl+moptaflcd+afl+aflcd
+- `cdfuzzing/plot_seed4.py`: main analysis script; reads from `~/experiment_results/seed_4/ar/`; outputs to `~/cdfuzzing/plots_seed4/`- `cdfuzzing/magma/tools/captain/captainrc_batch2`: captainrc for moptafl+moptaflcd+afl+aflcd
 - `cdfuzzing/magma/tools/captain/captainrc_batch3`: captainrc for aflfast+aflfastcd+honggfuzz+honggfuzzcd (batch 3 was stopped early due to disk)
 - `cdfuzzing/magma/tools/captain/run_batches.sh`: sequential batch runner (batch1→2→3 with Docker cleanup)
 - `cdfuzzing/magma/fuzzers/aflpluspluscd/fetch.sh`: contains AFL++ bug fixes (alias table, top_rated[], splice loops — applied via sed)
 - `~/experiment_results/seed_4/ar/`: raw workdirs, NO_ARCHIVE=1 (not tar'd)
 - `~/cdfuzzing/plots_seed4/summary_table.txt`: per-program cross-pair results
 - `~/cdfuzzing/plots_seed4/parameter_eval.txt`: stagnation guard / reset distribution analysis
+- `cdfuzzing/profile.py`: CloudLab geni-lib profile (repo root for git discovery)
+- `cdfuzzing/cloudlab/`: setup-node.sh, worker-run.sh, orchestrate.sh, merge-results.sh
+- `cdfuzzing/CLOUDLAB.md`: full reference for the distributed experiment
 
 ## Commands That Worked
 
@@ -91,14 +100,11 @@ docker builder prune -af
 
 ## Next Steps
 
-1. **Write paper section on seed_4 results** using `summary_table.txt` and `parameter_eval.txt` as ground truth.
-2. **Run seed_5 (or seeds 1–3 and 5)** for statistical confidence — use 3–5 seeds per program pair.
+1. **Run the distributed CloudLab experiment** (CLOUDLAB.md) — gives multi-rep results for all 12
+   fuzzers including honggfuzz, on per-node local disk (fixes the seed_4 disk + missing-pair gaps).
+2. **Write paper section on seed_4 results** using `summary_table.txt` and `parameter_eval.txt` as ground truth.
 3. **Tune parameters per fuzzer family** based on parameter eval findings (see DECISIONS.md).
-4. **Add honggfuzz pair** on a larger disk node (≥100GB) or after pruning queue/ dirs first.
-5. **Export plots** for paper figures:
-   ```bash
-   scp -r eldarfin@amd149.utah.cloudlab.us:~/cdfuzzing/plots_seed4/ ~/paper/figures/
-   ```
+4. **Export plots** for paper figures from the merged run dir or `plots_seed4/`.
 
 ## Assumptions
 

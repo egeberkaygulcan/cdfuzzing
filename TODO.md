@@ -2,9 +2,11 @@
 
 ## High Priority
 
-- [ ] Run seeds 1–3 and 5 for all 4 complete pairs (aflplusplus, fairfuzz, moptafl, afl) — need ≥3 seeds for statistical claims — `cdfuzzing/magma/tools/captain/`
-- [ ] Add honggfuzz pair on a node with ≥100GB disk (or prune queue/ dirs before batch runs to stay under 60GB) — see DEBUGGING.md for disk issue
-- [ ] Complete aflfast pair: re-run aflfastcd for openssl and php targets only — `captainrc_rerun_b3` exists but was not used
+- [ ] **Run the distributed CloudLab experiment** — create profile from root `profile.py`, instantiate, `./orchestrate.sh --run-id dist1` on head — see CLOUDLAB.md (replaces the seed-by-seed single-machine runs below; honggfuzz now runs on per-node local disk)
+- [ ] Verify the CloudLab scripts end-to-end on first instantiation (NFS wait, Docker data-root move to /mydata, inter-node SSH, manifest IPs) — they are syntax-checked but UNVERIFIED
+- [ ] (Fallback if not using CloudLab) Run seeds 1–3 and 5 for the 4 complete pairs — `cdfuzzing/magma/tools/captain/`
+- [ ] (Covered by distributed run) Add honggfuzz pair — per-node /mydata blockstore removes the disk limit; otherwise needs ≥100GB node
+- [ ] (Covered by distributed run) Complete aflfast pair: openssl + php targets
 
 ## Medium Priority
 

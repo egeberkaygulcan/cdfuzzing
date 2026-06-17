@@ -152,3 +152,39 @@ Summary:
 
 Notes:
 Coverage metric is `queued_paths` (corpus size), not bitmap edge count. See DECISIONS.md.
+
+---
+
+## distributed (CloudLab): dist1 — all 12 fuzzers, multi-node (PLANNED)
+
+Goal:
+Replace the single-machine seed-by-seed workflow with one node per
+(fuzzer × repetition). Produce multi-rep results for all 12 fuzzers — including
+honggfuzz, which seed_4 could not run on a single 63GB node.
+
+Command (on the head node, after the CloudLab experiment boots):
+```bash
+cd /users/eldarfin/cdfuzzing/cloudlab
+./orchestrate.sh --run-id dist1 --timeout 24h
+```
+
+Configuration:
+- Profile: root `profile.py` (geni-lib), image `cdfuzzing-PG0:DedicatedMachine`
+- fuzzerSet=all, nodesPerFuzzer=2 → 24 workers + 1 head = 25 nodes
+- Each worker = 1 repetition; per-node `/mydata` blockstore (default 100GB)
+- Targets: all 9 Magma targets
+- CD parameters: same as seed_4 (WINDOW=100, THRESHOLD=0.05, CONSECUTIVE=5, ...)
+- Merge target: `/proj/cdfuzzing-PG0/distributed/dist1/`
+
+Output (expected):
+- `/proj/cdfuzzing-PG0/distributed/dist1/ar/<fuzzer>/<target>/<program>/<rep>/`
+- `/proj/cdfuzzing-PG0/distributed/dist1/plots/` (from `plot_seed4.py` via CDFUZZ_BASE)
+- `.../status/*.done|.failed` markers
+
+Status:
+PLANNED — scripts written and syntax-checked, not yet instantiated. See CLOUDLAB.md.
+
+Notes:
+First instantiation is also the end-to-end verification of the boot-time setup
+(NFS wait, Docker data-root move to /mydata, inter-node SSH, manifest IPs).
+
