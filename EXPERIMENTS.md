@@ -169,7 +169,7 @@ cd /users/eldarfin/cdfuzzing/cloudlab
 ```
 
 Configuration:
-- Profile: root `profile.py` (geni-lib), image `cdfuzzing-PG0:DedicatedMachine`
+- Profile: root `profile.py` (geni-lib), stock Ubuntu 22.04 image (Docker installed at boot by `cloudlab/setup-node.sh`; captain builds the Magma images on the node). Custom `cdfuzzing-PG0:DedicatedMachine` snapshot still selectable.
 - fuzzerSet=all, nodesPerFuzzer=2 → 24 workers + 1 head = 25 nodes
 - Each worker = 1 repetition; per-node `/mydata` blockstore (default 100GB)
 - Targets: all 9 Magma targets

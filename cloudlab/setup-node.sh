@@ -63,6 +63,18 @@ else
     chown "$USER_NAME":"$(id -gn "$USER_NAME")" /mydata || true
 fi
 
+# --- 1b. Ensure Docker (and rsync) are installed ---------------------------
+# Stock CloudLab Ubuntu images do not ship Docker. Install it idempotently so
+# the profile does not depend on a prebuilt custom image.
+if ! command -v rsync >/dev/null 2>&1 || ! command -v docker >/dev/null 2>&1; then
+    log "Installing prerequisites (docker.io, rsync)"
+    export DEBIAN_FRONTEND=noninteractive
+    for _ in $(seq 1 5); do apt-get update -y && break || sleep 10; done
+    apt-get install -y docker.io rsync || log "WARNING: apt install failed (will retry data-root move only if docker exists)"
+    systemctl enable docker 2>/dev/null || true
+    systemctl start docker 2>/dev/null || true
+fi
+
 # --- 2. Move Docker data-root onto /mydata ---------------------------------
 if command -v docker >/dev/null 2>&1; then
     if [ ! -f /mydata/.docker-moved ]; then
