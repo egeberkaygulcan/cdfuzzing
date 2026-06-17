@@ -16,10 +16,12 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
-BASE = "/users/eldarfin/experiment_results/seed_4"
+# BASE/OUTDIR default to the seed_4 run but can be overridden so the same
+# analysis runs against a distributed/merged run (see cloudlab/merge-results.sh).
+BASE = os.environ.get("CDFUZZ_BASE", "/users/eldarfin/experiment_results/seed_4")
 AR = os.path.join(BASE, "ar")
 CACHE = os.path.join(BASE, "cache")
-OUTDIR = "/users/eldarfin/cdfuzzing/plots_seed4"
+OUTDIR = os.environ.get("CDFUZZ_OUTDIR", "/users/eldarfin/cdfuzzing/plots_seed4")
 os.makedirs(OUTDIR, exist_ok=True)
 
 TARGETS = ["libpng", "libtiff", "libxml2", "openssl", "php", "poppler",
@@ -27,9 +29,10 @@ TARGETS = ["libpng", "libtiff", "libxml2", "openssl", "php", "poppler",
 
 # Fuzzer pairs: baseline -> CD variant (only complete 9/9 pairs)
 PAIRS = {
+    "aflplusplus": "aflpluspluscd",
     "fairfuzz": "fairfuzzcd",
-    "afl": "aflcd",
     "moptafl": "moptaflcd",
+    "afl": "aflcd",
     "aflfast": "aflfastcd",
 }
 
@@ -757,6 +760,262 @@ def plot_reset_summary(reset_data):
     plt.close(fig)
 
 
+# ─── CROSS-PAIR SUMMARY TABLE ────────────────────────────────────────────────
+
+def generate_summary_table():
+    """Print a cross-pair table: bugs and coverage for baseline vs CD."""
+    lines = []
+    lines.append("=" * 100)
+    lines.append("CROSS-PAIR SUMMARY TABLE — seed_4")
+    lines.append(f"Parameters: WINDOW=100  THRESHOLD=0.05  CONSECUTIVE=5  "
+                 f"STAGNATION_FACTOR=0.5  COOLDOWN=10  EMA_ALPHA=0.1")
+    lines.append("=" * 100)
+
+    grand = {"base_bugs": 0, "cd_bugs": 0, "base_cov": 0, "cd_cov": 0, "resets": 0, "programs": 0}
+
+    for base, cd in PAIRS.items():
+        lines.append(f"\n{'─'*100}")
+        lines.append(f"  PAIR: {base}  →  {cd}")
+        lines.append(f"  {'program':<40} {'base_bugs':>10} {'cd_bugs':>10} "
+                     f"{'Δbugs':>7} {'base_cov':>10} {'cd_cov':>10} "
+                     f"{'Δcov%':>8} {'resets':>8} {'verdict':>10}")
+        lines.append(f"  {'-'*97}")
+
+        pair_totals = {"base_bugs": 0, "cd_bugs": 0,
+                       "base_cov": 0.0, "cd_cov": 0.0, "resets": 0, "n": 0}
+
+        for target in TARGETS:
+            programs = find_all_programs(target)
+            for program in programs:
+                # bugs
+                base_bugs_d, _, _ = find_monitor_data(base, target, program)
+                cd_bugs_d, _, _ = find_monitor_data(cd, target, program)
+                bb = sum(1 for v in base_bugs_d.values() if v['triggered'] > 0) if base_bugs_d else 0
+                cb = sum(1 for v in cd_bugs_d.values() if v['triggered'] > 0) if cd_bugs_d else 0
+
+                # coverage
+                base_pd = find_plot_data(base, target)
+                cd_pd = find_plot_data(cd, target)
+                base_data = parse_plot_data(base_pd[program]) if program in base_pd else None
+                cd_data = parse_plot_data(cd_pd[program]) if program in cd_pd else None
+                bc = int(base_data['paths'][-1]) if base_data else 0
+                cc = int(cd_data['paths'][-1]) if cd_data else 0
+                dcov_pct = ((cc - bc) / bc * 100) if bc > 0 else 0.0
+
+                # resets from drift log
+                rows = parse_drift_log(cd, target, program)
+                resets = int(float(rows[-1].get('reset_count', 0))) if rows else 0
+
+                if bc == 0 and bb == 0 and cc == 0 and cb == 0:
+                    continue  # no data at all
+
+                verdict = "="
+                if cb > bb or cc > bc * 1.01:
+                    verdict = "CD+" if cb >= bb else "cov+"
+                elif bb > cb or bc > cc * 1.01:
+                    verdict = "base+" if bb >= cb else "cov-"
+
+                label = f"{target}/{program}"
+                lines.append(f"  {label:<40} {bb:>10} {cb:>10} {cb-bb:>+7} "
+                              f"{bc:>10} {cc:>10} {dcov_pct:>+8.1f}% {resets:>8}  {verdict:>9}")
+
+                pair_totals["base_bugs"] += bb
+                pair_totals["cd_bugs"] += cb
+                pair_totals["base_cov"] += bc
+                pair_totals["cd_cov"] += cc
+                pair_totals["resets"] += resets
+                pair_totals["n"] += 1
+
+        n = pair_totals["n"] or 1
+        avg_dcov = (pair_totals["cd_cov"] - pair_totals["base_cov"]) / pair_totals["base_cov"] * 100 \
+                   if pair_totals["base_cov"] > 0 else 0
+        lines.append(f"  {'-'*97}")
+        lines.append(f"  {'PAIR TOTAL':<40} {pair_totals['base_bugs']:>10} "
+                     f"{pair_totals['cd_bugs']:>10} "
+                     f"{pair_totals['cd_bugs']-pair_totals['base_bugs']:>+7} "
+                     f"{pair_totals['base_cov']:>10} {pair_totals['cd_cov']:>10} "
+                     f"{avg_dcov:>+8.1f}% {pair_totals['resets']:>8}")
+
+        grand["base_bugs"] += pair_totals["base_bugs"]
+        grand["cd_bugs"]   += pair_totals["cd_bugs"]
+        grand["base_cov"]  += pair_totals["base_cov"]
+        grand["cd_cov"]    += pair_totals["cd_cov"]
+        grand["resets"]    += pair_totals["resets"]
+        grand["programs"]  += n
+
+    grand_dcov = (grand["cd_cov"] - grand["base_cov"]) / grand["base_cov"] * 100 \
+                 if grand["base_cov"] > 0 else 0
+    lines.append(f"\n{'='*100}")
+    lines.append(f"  {'GRAND TOTAL':<40} {grand['base_bugs']:>10} "
+                 f"{grand['cd_bugs']:>10} "
+                 f"{grand['cd_bugs']-grand['base_bugs']:>+7} "
+                 f"{grand['base_cov']:>10} {grand['cd_cov']:>10} "
+                 f"{grand_dcov:>+8.1f}% {grand['resets']:>8}")
+    lines.append("=" * 100)
+
+    text = "\n".join(lines)
+    path = os.path.join(OUTDIR, "summary_table.txt")
+    with open(path, 'w') as f:
+        f.write(text)
+    print(f"  Saved {path}")
+    print(text)
+
+
+# ─── PARAMETER EVALUATION ────────────────────────────────────────────────────
+
+def generate_parameter_eval(reset_data):
+    """Evaluate CD parameter effectiveness from drift logs."""
+    PARAMS = {
+        "WINDOW": 100, "THRESHOLD": 0.05, "CONSECUTIVE": 5,
+        "STAGNATION_FACTOR": 0.5, "COOLDOWN": 10, "EMA_ALPHA": 0.1,
+    }
+    lines = []
+    lines.append("=" * 80)
+    lines.append("PARAMETER EVALUATION — seed_4")
+    lines.append("  Parameters used:")
+    for k, v in PARAMS.items():
+        lines.append(f"    AFL_DRIFT_{k} = {v}")
+    lines.append("=" * 80)
+
+    cd_fuzzers = sorted(reset_data.keys())
+
+    # Per-fuzzer: drifts detected vs resets fired (stagnation guard filter rate)
+    lines.append("\n── Stagnation Guard Effectiveness (drifts detected → resets fired) ──")
+    lines.append(f"  {'fuzzer':<20} {'drifts':>8} {'resets':>8} {'guard_filtered%':>16} {'resets_per_24h':>16}")
+    lines.append(f"  {'-'*72}")
+    for fz in cd_fuzzers:
+        total_d = sum(v['drifts'] for v in reset_data[fz].values())
+        total_r = sum(v['resets'] for v in reset_data[fz].values())
+        n_programs = len(reset_data[fz])
+        filtered_pct = (1 - total_r / total_d) * 100 if total_d > 0 else 0
+        resets_per = total_r / n_programs if n_programs > 0 else 0
+        lines.append(f"  {fz:<20} {total_d:>8} {total_r:>8} {filtered_pct:>15.1f}% {resets_per:>15.2f}")
+
+    # Reset count distribution across programs
+    lines.append("\n── Reset Count Distribution (programs bucketed by reset count) ──")
+    lines.append(f"  {'fuzzer':<20} {'0 resets':>10} {'1-2':>8} {'3-5':>8} {'6+':>8}")
+    lines.append(f"  {'-'*56}")
+    for fz in cd_fuzzers:
+        buckets = {0: 0, "1-2": 0, "3-5": 0, "6+": 0}
+        for d in reset_data[fz].values():
+            r = d['resets']
+            if r == 0:    buckets[0] += 1
+            elif r <= 2:  buckets["1-2"] += 1
+            elif r <= 5:  buckets["3-5"] += 1
+            else:         buckets["6+"] += 1
+        lines.append(f"  {fz:<20} {buckets[0]:>10} {buckets['1-2']:>8} "
+                     f"{buckets['3-5']:>8} {buckets['6+']:>8}")
+
+    # Coverage delta by reset bucket (averaged across all pairs)
+    lines.append("\n── Mean Coverage Delta by Reset Count (CD vs baseline) ──")
+    bucket_deltas = {0: [], "1-2": [], "3-5": [], "6+": []}
+    for fz in cd_fuzzers:
+        base = fz[:-2]  # strip 'cd'
+        for key, d in reset_data[fz].items():
+            parts = key.split('/')
+            target, program = parts[0], parts[1]
+            base_pd = find_plot_data(base, target)
+            base_data = parse_plot_data(base_pd[program]) if program in base_pd else None
+            if base_data is None or d['final_cov'] == 0:
+                continue
+            delta_pct = (d['final_cov'] - base_data['paths'][-1]) / base_data['paths'][-1] * 100
+            r = d['resets']
+            if r == 0:    bucket_deltas[0].append(delta_pct)
+            elif r <= 2:  bucket_deltas["1-2"].append(delta_pct)
+            elif r <= 5:  bucket_deltas["3-5"].append(delta_pct)
+            else:         bucket_deltas["6+"].append(delta_pct)
+
+    lines.append(f"  {'bucket':<10} {'n':>5} {'mean_Δcov%':>12} {'median_Δcov%':>14}")
+    lines.append(f"  {'-'*44}")
+    for bucket in [0, "1-2", "3-5", "6+"]:
+        vals = bucket_deltas[bucket]
+        if vals:
+            mean_v = np.mean(vals)
+            median_v = np.median(vals)
+            lines.append(f"  {str(bucket):<10} {len(vals):>5} {mean_v:>+11.2f}% {median_v:>+13.2f}%")
+
+    lines.append("\n── Assessment ──")
+    for bucket, label in [(0, "0 resets"), ("1-2", "1-2 resets"), ("3-5", "3-5 resets"), ("6+", "6+ resets")]:
+        vals = bucket_deltas[bucket]
+        if not vals:
+            continue
+        mean_v = np.mean(vals)
+        sign = "positive" if mean_v > 1 else ("negative" if mean_v < -1 else "neutral")
+        lines.append(f"  {label}: mean coverage delta {mean_v:+.2f}% → {sign}")
+
+    lines.append("\n── Parameter Recommendations ──")
+    # Check if high-reset programs (5+) are consistently negative
+    high_vals = bucket_deltas.get("3-5", []) + bucket_deltas.get("6+", [])
+    if high_vals and np.mean(high_vals) < -1:
+        lines.append("  [!] High-reset programs (3+) show negative coverage on average.")
+        lines.append("      → CONSECUTIVE (currently 5) or STAGNATION_FACTOR (currently 0.5)")
+        lines.append("        should be increased to reduce false-positive resets on")
+        lines.append("        slow-growth targets (parsers, state machines).")
+    low_vals = bucket_deltas.get("1-2", [])
+    if low_vals and np.mean(low_vals) > 1:
+        lines.append("  [+] 1-2 resets per campaign is net positive.")
+        lines.append("      → COOLDOWN=10 and current parameters appear well-calibrated")
+        lines.append("        for targets that benefit from occasional resets.")
+    zero_vals = bucket_deltas.get(0, [])
+    if zero_vals:
+        lines.append(f"  [i] {len(zero_vals)} programs never triggered a reset — drift "
+                     f"signal was too conservative or coverage was already stagnant.")
+
+    text = "\n".join(lines)
+    path = os.path.join(OUTDIR, "parameter_eval.txt")
+    with open(path, 'w') as f:
+        f.write(text)
+    print(f"  Saved {path}")
+    print(text)
+
+    # Plot: coverage delta distribution by reset bucket
+    fig, ax = plt.subplots(figsize=(10, 6))
+    bucket_labels = [str(b) for b in [0, "1-2", "3-5", "6+"]]
+    data_for_box = [bucket_deltas[b] for b in [0, "1-2", "3-5", "6+"] if bucket_deltas[b]]
+    labels_for_box = [str(b) for b in [0, "1-2", "3-5", "6+"] if bucket_deltas[b]]
+    if data_for_box:
+        bp = ax.boxplot(data_for_box, labels=labels_for_box, patch_artist=True,
+                        medianprops=dict(color='red', linewidth=2))
+        colors_box = ['#2ca02c', '#ff7f0e', '#d62728', '#9467bd']
+        for patch, color in zip(bp['boxes'], colors_box[:len(data_for_box)]):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.6)
+    ax.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.7)
+    ax.set_xlabel("Number of Resets (bucket)")
+    ax.set_ylabel("Coverage Delta vs Baseline (%)")
+    ax.set_title("Coverage Impact by Reset Count\n(+ = CD better, - = baseline better)",
+                 fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y')
+    plt.tight_layout()
+    outpath = os.path.join(OUTDIR, "param_eval_coverage_by_resets.png")
+    fig.savefig(outpath, dpi=150, bbox_inches='tight')
+    print(f"  Saved {outpath}")
+    plt.close(fig)
+
+    # Plot: stagnation guard effectiveness per fuzzer
+    fig, ax = plt.subplots(figsize=(10, 5))
+    fz_list = cd_fuzzers
+    drifts_all = [sum(v['drifts'] for v in reset_data[fz].values()) for fz in fz_list]
+    resets_all = [sum(v['resets'] for v in reset_data[fz].values()) for fz in fz_list]
+    x = np.arange(len(fz_list))
+    ax.bar(x, drifts_all, label='Drifts Detected', color='#aec7e8', alpha=0.9)
+    ax.bar(x, resets_all, label='Resets Fired', color='#d62728', alpha=0.85)
+    ax.set_xticks(x)
+    ax.set_xticklabels(fz_list, rotation=45, ha='right')
+    ax.set_ylabel("Count (all programs combined)")
+    ax.set_title("Stagnation Guard: Drifts Detected vs Resets Fired", fontweight='bold')
+    ax.legend()
+    ax.grid(True, alpha=0.3, axis='y')
+    for i, (d, r) in enumerate(zip(drifts_all, resets_all)):
+        if d > 0:
+            ax.text(i, d + 0.5, f"{r}/{d}", ha='center', fontsize=8)
+    plt.tight_layout()
+    outpath = os.path.join(OUTDIR, "param_eval_guard_effectiveness.png")
+    fig.savefig(outpath, dpi=150, bbox_inches='tight')
+    print(f"  Saved {outpath}")
+    plt.close(fig)
+
+
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
@@ -781,5 +1040,11 @@ if __name__ == '__main__':
     print("\n6. Reset summary plots...")
     plot_reset_summary(reset_data)
 
-    print(f"\nAll plots saved to: {OUTDIR}/")
+    print("\n7. Cross-pair summary table...")
+    generate_summary_table()
+
+    print("\n8. Parameter evaluation...")
+    generate_parameter_eval(reset_data)
+
+    print(f"\nAll outputs saved to: {OUTDIR}/")
     print(f"Files: {sorted(os.listdir(OUTDIR))}")
