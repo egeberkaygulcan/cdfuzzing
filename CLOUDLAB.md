@@ -19,18 +19,17 @@ Defaults (`fuzzerSet=all`, `nodesPerFuzzer=2`) → **24 workers + 1 head = 25 no
 Each worker = one repetition (`rep 0`, `rep 1`), giving the multi-rep sample the
 seed_4 single-machine run could not produce.
 
-Each node gets a stock **Ubuntu 22.04** image by default; `setup-node.sh`
-installs Docker (+rsync) at boot and captain builds the Magma target images on
-the node (Magma is not baked into the image). The custom `cdfuzzing-PG0:DedicatedMachine`
-snapshot is still selectable from the image dropdown if you prefer to skip the
-boot-time install. Each node also gets a `/mydata` blockstore (default 100GB)
-and a static IP on a best-effort private LAN.
+Each node gets a stock **Ubuntu 22.04** image; `setup-node.sh` installs Docker
+(+rsync) at boot and captain builds the Magma target images on the node (Magma
+is not baked into the image, and no custom snapshot is used). Each node also
+gets a `/mydata` blockstore (default 100GB) and a static IP on a best-effort
+private LAN.
 
 ### Profile parameters
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `osImage` | `UBUNTU22-64-STD` (stock) | Docker installed at boot; custom snapshot selectable |
+| `osImage` | `UBUNTU22-64-STD` (stock) | Docker installed at boot; stock Ubuntu only |
 | `fuzzerSet` | `all` | `all` / `baselines` / `cd` |
 | `nodesPerFuzzer` | `2` | nodes (= reps) per fuzzer |
 | `phystype` | (blank) | leave blank to let mapper choose |

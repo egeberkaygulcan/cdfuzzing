@@ -50,25 +50,22 @@ pc = portal.Context()
 request = pc.makeRequestRSpec()
 
 # --- Parameters ------------------------------------------------------------
-# Default is a stock Ubuntu image; setup-node.sh installs Docker at boot, and
-# captain builds the Magma target images on the node (Magma does not need to be
-# baked into the image). The custom image entry is kept for the case where you
-# later snapshot a node -- note the '//' project/image separator (a ':' there is
-# the *version* delimiter and produces a 'Could not import .../:0' import error).
+# Stock Ubuntu images only. setup-node.sh installs Docker at boot and captain
+# builds the Magma target images on the node, so no custom snapshot is needed.
+# (The old cdfuzzing-PG0:DedicatedMachine snapshot was removed: listing it here
+# made CloudLab try to import it at profile-load time and fail with
+# 'Could not import .../DedicatedMachine:0'.)
 imageList = [
     ('urn:publicid:IDN+emulab.net+image+emulab-ops//UBUNTU22-64-STD', 'Ubuntu 22.04 (stock)'),
     ('urn:publicid:IDN+emulab.net+image+emulab-ops//UBUNTU20-64-STD', 'Ubuntu 20.04 (stock)'),
     ('urn:publicid:IDN+emulab.net+image+emulab-ops//UBUNTU24-64-STD', 'Ubuntu 24.04 (stock)'),
-    ('urn:publicid:IDN+utah.cloudlab.us+image+cdfuzzing-PG0//DedicatedMachine',
-     'cdfuzzing custom snapshot (only if you created one)'),
 ]
 
 pc.defineParameter("osImage", "OS / disk image", portal.ParameterType.IMAGE,
                    imageList[0], imageList,
-                   longDescription="Default is stock Ubuntu 22.04; Docker is installed at boot by "
+                   longDescription="Stock Ubuntu 22.04 by default; Docker is installed at boot by "
                                    "cloudlab/setup-node.sh and captain builds the Magma images on "
-                                   "the node. Only pick the custom snapshot if you actually created "
-                                   "one in the project (Storage -> Disk Images).")
+                                   "the node.")
 
 pc.defineParameter("fuzzerSet", "Fuzzers to deploy", portal.ParameterType.STRING, "all",
                    [("all", "All 12 (6 baseline + 6 CD)"),
