@@ -193,3 +193,37 @@ dist1 reps are NOT pure statistical repetitions for CD fuzzers — they test dif
 regimes. A follow-up run (dist2) with fixed winning parameters on both reps is needed before
 computing confidence intervals or statistical tests on CD-vs-baseline comparisons.
 A single-seed result per config will be directional only; 3+ reps needed for significance.
+
+---
+
+## 2026-06-18: Fix FairFuzz blacklist trap
+
+**Problem:**
+In dist1, fairfuzzcd showed near-zero coverage on 3 targets: libpng (4 paths),
+libtiff/tiff_read_rgba (21 paths), php/json (57 paths). These runs were not stuck
+from CD resets (0 resets observed) — the CD module was a non-factor.
+
+**Root cause:**
+FairFuzz maintains a `blacklist[]` of branches it can't consistently reach. When
+ALL rare branches hit by ALL queue entries are blacklisted, `is_rb_hit_mini()`
+returns NULL for every input → `fuzz_one()` returns 1 (skip) → the fuzzer spins
+through millions of queue cycles with 0 mutations. Affected run: libpng ran
+21.7M queue cycles with only 5M executions (0.24 execs/cycle).
+
+A recovery mechanism exists (checks `prev_cycle_wo_new && bootstrap` in fuzz_one)
+that falls back to vanilla AFL mode. But it requires the `-q` flag to enable it
+(`bootstrap` defaults to 0).
+
+**Fix 1: Add `-q 1` to fairfuzz and fairfuzzcd run.sh**
+When stuck for ≥1 cycle with no new finds, vanilla AFL scheduling is used for
+each fuzz_one() call instead of branch targeting. FairFuzz mode resumes when a
+new path is found. Applied to both fuzzers for a fair A/B comparison.
+
+**Fix 2: Reset FairFuzz state in `perform_corpus_reset()` (fairfuzzcd only)**
+After a CD reset, `hit_bits[]` retains counts from deleted entries, making
+formerly rare branches appear "common". The blacklist also persists. After a
+reset these stale counts would cause the blacklist to refill immediately. Fixed
+by clearing `hit_bits[]`, `blacklist[]`, `rare_branch_exp`, and
+`was_fuzzed`/`fuzzed_branches` on surviving entries.
+
+**Commit:** `0a60bf3c`
