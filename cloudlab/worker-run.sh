@@ -11,18 +11,17 @@
 #   worker-run.sh --fuzzer F --rep N --run-id ID --timeout 8h \
 #                 [--targets "sqlite3 libpng ..."] [--repo PATH] [--shared PATH]
 #
-# Parameter search design (per-rep CD config):
-#   CD fuzzers run two different parameter sets across their two rep nodes so
-#   each 2-node pair acts as a single-shot A/B comparison rather than a plain
-#   repetition.  Baselines use the same config on both reps (pure repetitions).
+# Parameter design (dist2 — winning params from dist1 A/B, both reps identical):
+#   Both reps of each CD fuzzer now use the same winning parameter set so that
+#   the two reps are genuine statistical repetitions for CD-vs-baseline analysis.
 #
-#   Rep 0 (config A)          Rep 1 (config B)          Rationale
-#   aflcd         C=5  SF=0.5  C=3  SF=0.5  reference vs more aggressive
-#   aflpluspluscd C=6  SF=0.5  C=8  SF=0.5  two degrees of reduction from 2.38/prog
-#   fairfuzzcd    C=3  SF=0.5  C=2  SF=0.5  both more aggressive (C=5 fired 0 resets)
-#   moptaflcd     C=8  SF=0.5  C=5  SF=0.3  raise bar vs tighten stagnation guard
-#   aflfastcd     C=5  SF=0.5  C=3  SF=0.5  default vs more aggressive
-#   honggfuzzcd   C=5  SF=0.5  C=3  SF=0.5  default vs more aggressive
+#   Fuzzer          C   SF    dist1 basis
+#   aflcd           3  0.5   rep1 won (+10268 cov, 15 vs 6 resets)
+#   aflpluspluscd   8  0.5   rep1 won (+3388 cov, 19 vs 18 resets)
+#   fairfuzzcd      3  0.5   rep0 won (+4941 cov); blacklist bug fixed in dist2
+#   moptaflcd       5  0.3   rep1 won (+3113 cov, 31 vs 25 resets)
+#   aflfastcd       3  0.5   rep1 won (+1995 cov, 3 vs 3 resets)
+#   honggfuzzcd     5  0.5   both had 0 CD activity (init bug); default kept
 ##
 set -uo pipefail
 
@@ -68,42 +67,18 @@ mkdir -p "$LOCALWORK" "$STATUS_DIR" "$SHARED_RUN/log"
 rm -f "$STATUS_DIR/${NODE_TAG}.done" "$STATUS_DIR/${NODE_TAG}.failed"
 echo "$(date '+%F %T') started on $(hostname)" > "$STATUS_DIR/${NODE_TAG}.running"
 
-# --- Per-rep CD parameter selection (A/B parameter search) ----------------
-# CD fuzzers assign different CONSECUTIVE / STAGNATION_FACTOR per rep so each
-# node tests a distinct config.  Baselines are unaffected (vars exported but
-# the CD module is absent).
+# --- Per-fuzzer CD parameter selection (winning params from dist1 A/B) ----
+# Both reps use the same winning config — these are genuine repetitions.
 CD_CONSECUTIVE=5
 CD_STAGNATION=0.5
 if [[ "$FUZZER" == *cd ]]; then
     case "$FUZZER" in
-        aflcd)
-            # seed_4: 0.43 resets/prog — well-calibrated; explore tighter bound
-            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=5 || CD_CONSECUTIVE=3
-            ;;
-        aflpluspluscd)
-            # seed_4: 2.38 resets/prog — slightly high; test two reductions
-            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=6 || CD_CONSECUTIVE=8
-            ;;
-        fairfuzzcd)
-            # seed_4: 0 resets (C=5 filtered 100% of drifts); both more aggressive
-            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=3 || CD_CONSECUTIVE=2
-            ;;
-        moptaflcd)
-            # seed_4: 3.62 resets/prog; raise bar vs tighten stagnation guard
-            if [ "$REP" -eq 0 ]; then
-                CD_CONSECUTIVE=8; CD_STAGNATION=0.5
-            else
-                CD_CONSECUTIVE=5; CD_STAGNATION=0.3
-            fi
-            ;;
-        aflfastcd)
-            # seed_4: partial — unknown calibration; default vs more aggressive
-            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=5 || CD_CONSECUTIVE=3
-            ;;
-        honggfuzzcd)
-            # seed_4: never ran — default vs more aggressive
-            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=5 || CD_CONSECUTIVE=3
-            ;;
+        aflcd)         CD_CONSECUTIVE=3; CD_STAGNATION=0.5 ;;
+        aflpluspluscd) CD_CONSECUTIVE=8; CD_STAGNATION=0.5 ;;
+        fairfuzzcd)    CD_CONSECUTIVE=3; CD_STAGNATION=0.5 ;;
+        moptaflcd)     CD_CONSECUTIVE=5; CD_STAGNATION=0.3 ;;
+        aflfastcd)     CD_CONSECUTIVE=3; CD_STAGNATION=0.5 ;;
+        honggfuzzcd)   CD_CONSECUTIVE=5; CD_STAGNATION=0.5 ;;
     esac
 fi
 log "CD params: CONSECUTIVE=$CD_CONSECUTIVE STAGNATION_FACTOR=$CD_STAGNATION"
