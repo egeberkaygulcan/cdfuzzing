@@ -277,6 +277,13 @@ static void driftCycle(honggfuzz_t* hfuzz) {
     if (mutations == drift_last_mutations) return;
     drift_last_mutations = mutations;
 
+    /* Lazily capture initial corpus size on first real cycle (threads may not
+     * have finished loading the corpus when drift_det was initialized). */
+    if (drift_det->initial_corpus_count == 0 && corpus > 0) {
+        drift_det->initial_corpus_count = corpus;
+        LOG_I("Drift: initial_corpus_count set lazily to %zu", (size_t)corpus);
+    }
+
     drift_det->iteration = mutations;
 
     /* Update history */

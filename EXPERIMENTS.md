@@ -155,36 +155,76 @@ Coverage metric is `queued_paths` (corpus size), not bitmap edge count. See DECI
 
 ---
 
-## distributed (CloudLab): dist1 — all 12 fuzzers, multi-node (PLANNED)
+## distributed (CloudLab): smoke1 — afl+aflcd, sqlite3, 10min (COMPLETE)
+
+Goal:
+End-to-end verification of the CloudLab pipeline before launching the full dist1 campaign.
+
+Command:
+```bash
+cd /local/repository/cloudlab
+./orchestrate.sh --run-id smoke1 --timeout 10m --fuzzers "afl aflcd" --targets "sqlite3"
+```
+
+Configuration:
+- 4 workers (afl-0, afl-1, aflcd-0, aflcd-1), 1 target (sqlite3), 1 program (sqlite3)
+- Timeout: 10min
+- CD parameters: CONSECUTIVE=5, STAGNATION_FACTOR=0.5 (defaults)
+
+Output:
+- `/proj/cdfuzzing-PG0/distributed/smoke1/ar/`
+- `/proj/cdfuzzing-PG0/distributed/smoke1/plots/` (15 output files)
+
+Status:
+COMPLETE — 2026-06-17. 4/4 workers done, 0 failed.
+
+Summary:
+- Pipeline verified end-to-end: Docker build, captain, rsync to NFS, plot_seed4.py analysis
+- matplotlib/numpy installed on head via apt (pip ~/.local/ path was insufficient)
+- 15 output files confirmed in plots/ dir
+
+---
+
+## distributed (CloudLab): dist1 — all 12 fuzzers, 8h, multi-node (RUNNING)
 
 Goal:
 Replace the single-machine seed-by-seed workflow with one node per
 (fuzzer × repetition). Produce multi-rep results for all 12 fuzzers — including
-honggfuzz, which seed_4 could not run on a single 63GB node.
+honggfuzz (which seed_4 could not run on a single 63GB node). Additionally,
+run an A/B parameter search for all 6 CD fuzzers (see DECISIONS.md).
 
-Command (on the head node, after the CloudLab experiment boots):
+Command:
 ```bash
-cd /users/eldarfin/cdfuzzing/cloudlab
-./orchestrate.sh --run-id dist1 --timeout 24h
+cd /local/repository/cloudlab
+./orchestrate.sh --run-id dist1 --timeout 8h --poll 60
+# launched in tmux session 'dist1' on head, 2026-06-17 ~20:20 CDT
 ```
 
 Configuration:
-- Profile: root `profile.py` (geni-lib), stock Ubuntu 22.04 image (Docker installed at boot by `cloudlab/setup-node.sh`; captain builds the Magma images on the node).
 - fuzzerSet=all, nodesPerFuzzer=2 → 24 workers + 1 head = 25 nodes
-- Each worker = 1 repetition; per-node `/mydata` blockstore (default 100GB)
-- Targets: all 9 Magma targets
-- CD parameters: same as seed_4 (WINDOW=100, THRESHOLD=0.05, CONSECUTIVE=5, ...)
+- Each worker = 1 repetition; per-node `/mydata` blockstore (~87GB free)
+- Targets: all 9 Magma targets (21 programs)
+- CD parameters: A/B per-rep design — see DECISIONS.md for full mapping
+- Baselines: both reps identical (CONSECUTIVE=5, STAGNATION_FACTOR=0.5)
+- Worker run log: `/mydata/dist1-<fuzzer>-<rep>.boot.log` on each worker
 - Merge target: `/proj/cdfuzzing-PG0/distributed/dist1/`
 
 Output (expected):
 - `/proj/cdfuzzing-PG0/distributed/dist1/ar/<fuzzer>/<target>/<program>/<rep>/`
 - `/proj/cdfuzzing-PG0/distributed/dist1/plots/` (from `plot_seed4.py` via CDFUZZ_BASE)
 - `.../status/*.done|.failed` markers
+- `/proj/cdfuzzing-PG0/distributed/dist1_orch.log` (live orchestrator log)
 
 Status:
-PLANNED — scripts written and syntax-checked, not yet instantiated. See CLOUDLAB.md.
+RUNNING — dispatched 2026-06-17 20:20 CDT; expected finish ~06:00 CDT 2026-06-18.
+All 24 workers dispatched (0 skipped). Polling every 60s.
 
 Notes:
-First instantiation is also the end-to-end verification of the boot-time setup
-(NFS wait, Docker data-root move to /mydata, inter-node SSH, manifest IPs).
+dist1 was preceded by smoke1 which verified the full pipeline.
+queue/ is excluded from rsync (fuzzer_stats, plot_data, drift_log.csv, monitor/ only).
+Analysis auto-runs via merge-results.sh when all workers complete.
+If auto-analysis fails, run manually:
+  CDFUZZ_BASE=/proj/cdfuzzing-PG0/distributed/dist1 \
+  CDFUZZ_OUTDIR=/proj/cdfuzzing-PG0/distributed/dist1/plots \
+  python3 /local/repository/plot_seed4.py
 

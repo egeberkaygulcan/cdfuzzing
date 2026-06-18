@@ -34,6 +34,7 @@ PAIRS = {
     "moptafl": "moptaflcd",
     "afl": "aflcd",
     "aflfast": "aflfastcd",
+    "honggfuzz": "honggfuzzcd",
 }
 
 COLORS = {
@@ -67,8 +68,8 @@ def find_plot_data(fuzzer, target):
     """Find plot_data file for a fuzzer/target combination (any program)."""
     results = {}
     for root_dir in [AR, CACHE]:
-        pattern = os.path.join(root_dir, fuzzer, target, "*", "0", "findings")
-        for findings_dir in glob.glob(pattern):
+        pattern = os.path.join(root_dir, fuzzer, target, "*", "*", "findings")
+        for findings_dir in sorted(glob.glob(pattern)):
             # Check for plot_data directly or in default/ subdir
             for pd_path in [
                 os.path.join(findings_dir, "plot_data"),
@@ -126,8 +127,8 @@ def parse_fuzzer_stats(fuzzer, target):
     """Parse fuzzer_stats for final summary."""
     results = {}
     for root_dir in [AR, CACHE]:
-        pattern = os.path.join(root_dir, fuzzer, target, "*", "0", "findings")
-        for findings_dir in glob.glob(pattern):
+        pattern = os.path.join(root_dir, fuzzer, target, "*", "*", "findings")
+        for findings_dir in sorted(glob.glob(pattern)):
             for stats_path in [
                 os.path.join(findings_dir, "fuzzer_stats"),
                 os.path.join(findings_dir, "default", "fuzzer_stats"),
@@ -144,11 +145,31 @@ def parse_fuzzer_stats(fuzzer, target):
     return results
 
 
+def get_final_cov(fuzzer, target, program):
+    """Final corpus size: plot_data['paths'][-1] if available, else output/ file count."""
+    pd_files = find_plot_data(fuzzer, target)
+    if program in pd_files:
+        data = parse_plot_data(pd_files[program])
+        if data is not None:
+            return int(data['paths'][-1])
+    # Fallback for honggfuzz-style fuzzers that write corpus to output/ not queue/
+    for root_dir in [AR, CACHE]:
+        for od in sorted(glob.glob(
+                os.path.join(root_dir, fuzzer, target, program, "*", "output"))):
+            if os.path.isdir(od):
+                n = sum(1 for f in os.listdir(od)
+                        if os.path.isfile(os.path.join(od, f)))
+                if n > 0:
+                    return n
+    return 0
+
+
 def find_monitor_data(fuzzer, target, program):
     """Parse monitor canary files for bug reaching/triggering."""
     for root_dir in [AR, CACHE]:
-        mon_dir = os.path.join(root_dir, fuzzer, target, program, "0", "monitor")
-        if os.path.isdir(mon_dir):
+        for mon_dir in sorted(glob.glob(
+                os.path.join(root_dir, fuzzer, target, program, "*", "monitor"))):
+          if os.path.isdir(mon_dir):
             timestamps = sorted([int(f) for f in os.listdir(mon_dir) if f.isdigit()])
             if not timestamps:
                 continue
@@ -257,17 +278,14 @@ def plot_coverage_bars():
         for target in TARGETS:
             programs = find_all_programs(target)
             for program in programs:
-                base_pd = find_plot_data(base, target)
-                cd_pd = find_plot_data(cd, target)
+                bv = get_final_cov(base, target, program)
+                cv = get_final_cov(cd, target, program)
 
-                base_data = parse_plot_data(base_pd[program]) if program in base_pd else None
-                cd_data = parse_plot_data(cd_pd[program]) if program in cd_pd else None
-
-                if base_data is not None or cd_data is not None:
+                if bv > 0 or cv > 0:
                     short = program[:20]
                     labels.append(f"{target}\n{short}")
-                    base_vals.append(base_data['paths'][-1] if base_data is not None else 0)
-                    cd_vals.append(cd_data['paths'][-1] if cd_data is not None else 0)
+                    base_vals.append(bv)
+                    cd_vals.append(cv)
 
         if not labels:
             plt.close(fig)
@@ -469,12 +487,15 @@ def plot_bugs_triggered(bug_data):
 def parse_drift_log(fuzzer, target, program):
     """Parse drift_log.csv for a CD fuzzer, return rows list or None."""
     for root_dir in [AR, CACHE]:
-        for drift_path in [
-            os.path.join(root_dir, fuzzer, target, program, "0",
-                         "findings", "drift_log.csv"),
-            os.path.join(root_dir, fuzzer, target, program, "0",
-                         "findings", "default", "drift_log.csv"),
-        ]:
+        for drift_path in sorted(glob.glob(
+                os.path.join(root_dir, fuzzer, target, program, "*",
+                             "findings", "drift_log.csv"))) + \
+                sorted(glob.glob(
+                os.path.join(root_dir, fuzzer, target, program, "*",
+                             "findings", "default", "drift_log.csv"))) + \
+                sorted(glob.glob(
+                os.path.join(root_dir, fuzzer, target, program, "*",
+                             "output", "drift_log.csv"))):
             if os.path.isfile(drift_path):
                 try:
                     with open(drift_path) as f:
@@ -732,9 +753,7 @@ def plot_reset_summary(reset_data):
             parts = key.split('/')
             target, program = parts[0], parts[1]
             # Get baseline final coverage
-            base_pd = find_plot_data(base, target)
-            base_data = parse_plot_data(base_pd[program]) if program in base_pd else None
-            base_cov = base_data['paths'][-1] if base_data is not None else 0
+            base_cov = get_final_cov(base, target, program)
 
             cd_cov = d['final_cov']
             improvement = ((cd_cov - base_cov) / base_cov * 100) if base_cov > 0 else 0
@@ -794,12 +813,8 @@ def generate_summary_table():
                 cb = sum(1 for v in cd_bugs_d.values() if v['triggered'] > 0) if cd_bugs_d else 0
 
                 # coverage
-                base_pd = find_plot_data(base, target)
-                cd_pd = find_plot_data(cd, target)
-                base_data = parse_plot_data(base_pd[program]) if program in base_pd else None
-                cd_data = parse_plot_data(cd_pd[program]) if program in cd_pd else None
-                bc = int(base_data['paths'][-1]) if base_data else 0
-                cc = int(cd_data['paths'][-1]) if cd_data else 0
+                bc = get_final_cov(base, target, program)
+                cc = get_final_cov(cd, target, program)
                 dcov_pct = ((cc - bc) / bc * 100) if bc > 0 else 0.0
 
                 # resets from drift log

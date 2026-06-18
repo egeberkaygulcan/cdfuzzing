@@ -93,10 +93,12 @@ pc.defineParameter("blockstoreMax", "Use all available local disk",
                    portal.ParameterType.BOOLEAN, False, advanced=True,
                    longDescription="Allocate all free local disk to /mydata instead of a fixed size.")
 
-pc.defineParameter("repoPath", "cdfuzzing repo path (shared home)",
-                   portal.ParameterType.STRING, "/users/eldarfin/cdfuzzing", advanced=True,
-                   longDescription="Absolute path to the cdfuzzing checkout on the shared home FS. "
-                                   "Boot-time setup is sourced from <repoPath>/cloudlab/.")
+pc.defineParameter("repoPath", "cdfuzzing repo path (per-node git checkout)",
+                   portal.ParameterType.STRING, "/local/repository", advanced=True,
+                   longDescription="Absolute path to the per-node cdfuzzing git checkout. CloudLab "
+                                   "clones the profile repo to /local/repository on every node, so "
+                                   "boot-time setup is sourced from <repoPath>/cloudlab/. Home "
+                                   "directories are NOT NFS-shared on this cluster; only /proj is.")
 
 pc.defineParameter("sharedDir", "Shared merge directory (project NFS)",
                    portal.ParameterType.STRING, "/proj/cdfuzzing-PG0", advanced=True,
@@ -135,12 +137,14 @@ SETUP = params.repoPath + "/cloudlab/setup-node.sh"
 
 
 def boot_command(setup_args):
-    # Wait for the shared home FS (where setup-node.sh lives) to mount, then run it.
-    return ("/bin/bash -c '"
-            "REPO=\"%s\"; "
-            "for i in $(seq 1 60); do [ -f \"$REPO/cloudlab/setup-node.sh\" ] && break; sleep 5; done; "
-            "sudo /bin/bash \"$REPO/cloudlab/setup-node.sh\" %s >> /local/setup.log 2>&1"
-            "'") % (params.repoPath, setup_args)
+    # IMPORTANT: the geni Execute service wraps this string in /bin/bash -c "...".
+    # Do NOT use double quotes, $(...) or backticks here, or that wrapper mis-parses
+    # the command (the original boot setup died with a bash syntax error because the
+    # inner REPO="..." quotes and $(seq ...) collided with the wrapper's quotes).
+    # The repo is the per-node git checkout at SETUP's parent (default
+    # /local/repository), already populated by the earlier git-clone startup step,
+    # so no shared-home wait loop is needed.
+    return "sudo /bin/bash %s %s >> /local/setup.log 2>&1" % (SETUP, setup_args)
 
 
 # --- Private LAN (static IPs give the head stable SSH targets) --------------

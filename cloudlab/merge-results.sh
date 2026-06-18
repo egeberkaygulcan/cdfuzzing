@@ -16,7 +16,7 @@ RUN_ID=""
 DO_ANALYZE=1
 
 [ -f /local/cdfuzz-role ] && . /local/cdfuzz-role 2>/dev/null
-REPO="${REPO:-/users/eldarfin/cdfuzzing}"
+REPO="${REPO:-/local/repository}"
 SHARED="${SHARED:-/proj/cdfuzzing-PG0}"
 
 while [ $# -gt 0 ]; do

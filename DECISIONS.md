@@ -151,5 +151,45 @@ Keeping parameters stable across seeds isolates the effect of the bug fix.
 
 Consequences:
 The parameter eval (see `parameter_eval.txt`) shows `fairfuzzcd` never fires (CONSECUTIVE=5 too
-high for fairfuzz's slow scheduling) and `moptaflcd` over-resets (3.62/program). A follow-up
-seed should test `CONSECUTIVE=3` for fairfuzzcd and `CONSECUTIVE=8` for moptaflcd.
+high for fairfuzz's slow scheduling) and `moptaflcd` over-resets (3.62/program). dist1 tests
+alternative parameters per the A/B design below.
+
+---
+
+## 2026-06-17: A/B per-rep parameter design for dist1
+
+Decision:
+`dist1` uses different `AFL_DRIFT_CONSECUTIVE` / `AFL_DRIFT_STAGNATION_FACTOR` values for
+rep 0 vs rep 1 of each CD fuzzer, rather than running identical repetitions. This makes each
+2-node CD pair a single-shot A/B comparison instead of a plain statistical repetition.
+
+Rationale (from seed_4 `parameter_eval.txt`):
+- `fairfuzzcd` (C=5): 0 resets fired (stagnation guard filtered 100% of 50 drifts — too conservative)
+- `moptaflcd` (C=5): 3.62 resets/program (MOpt's mutation scheduling amplifies KS p-values)
+- `aflpluspluscd` (C=5): 2.38 resets/program (moderately high)
+- `aflcd` (C=5): 0.43 resets/program (reference — best-calibrated pair)
+
+A/B parameter mapping for dist1:
+
+| CD Fuzzer      | Rep 0 (Config A)       | Rep 1 (Config B)       | Goal                            |
+|---|---|---|---|
+| aflcd          | C=5, SF=0.5 (seed_4)   | C=3, SF=0.5            | reference vs more aggressive    |
+| aflpluspluscd  | C=6, SF=0.5            | C=8, SF=0.5            | mild vs aggressive reduction    |
+| fairfuzzcd     | C=3, SF=0.5            | C=2, SF=0.5            | both fix 0-reset (C=5 filtered 100%) |
+| moptaflcd      | C=8, SF=0.5            | C=5, SF=0.3            | raise bar vs tighten stagnation guard |
+| aflfastcd      | C=5, SF=0.5 (default)  | C=3, SF=0.5            | default vs more aggressive      |
+| honggfuzzcd    | C=5, SF=0.5 (default)  | C=3, SF=0.5            | default vs more aggressive      |
+
+Baseline fuzzers (afl, aflplusplus, fairfuzz, moptafl, aflfast, honggfuzz): both reps identical.
+The CD environment variables are exported for baselines too (present but inactive — no CD module).
+
+Implementation:
+`cloudlab/worker-run.sh` has a `case "$FUZZER"` block that sets `CD_CONSECUTIVE` and
+`CD_STAGNATION` before writing the captainrc. These are exported as
+`AFL_DRIFT_CONSECUTIVE` and `AFL_DRIFT_STAGNATION_FACTOR` into the fuzzer container environment.
+
+Consequences:
+dist1 reps are NOT pure statistical repetitions for CD fuzzers — they test different parameter
+regimes. A follow-up run (dist2) with fixed winning parameters on both reps is needed before
+computing confidence intervals or statistical tests on CD-vs-baseline comparisons.
+A single-seed result per config will be directional only; 3+ reps needed for significance.
