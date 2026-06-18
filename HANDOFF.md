@@ -2,11 +2,10 @@
 
 ## Current Goal
 
-Evaluate CD-Fuzzing (concept drift detection integrated into AFL-family fuzzers) on the Magma
-benchmark. **`dist1` (8h, all 12 fuzzers × 2 reps × 9 targets on 24 CloudLab c220g1 nodes) was
-launched 2026-06-17 ~20:20 CDT and is currently running.** Expected finish ~06:00 CDT 2026-06-18.
-Monitor: `tail -f /proj/cdfuzzing-PG0/distributed/dist1_orch.log` or `tmux attach -t dist1` on
-the head node. See CLOUDLAB.md for full details.
+Evaluate CD-Fuzzing on the Magma benchmark. **`dist2` (8h, all 12 fuzzers × 2 reps × 9
+targets, winning params from dist1 A/B) was launched 2026-06-18 ~06:30 CDT and is currently
+running.** Expected finish ~14:30 CDT 2026-06-18.
+Monitor: `tail -f /proj/cdfuzzing-PG0/distributed/dist2_orch.log` or `tmux attach -t dist2`.
 
 ## Current State
 
@@ -26,18 +25,26 @@ the head node. See CLOUDLAB.md for full details.
 - Key outputs: `summary_table.txt`, `parameter_eval.txt`, `bug_report.txt`, `reset_report.txt`
 - Coverage line plots, bug bar charts, drift signal plots, reset timing/summary plots
 
-**Distributed CloudLab experiment — `dist1` RUNNING**
-- 24 workers dispatched 2026-06-17 ~20:20 CDT; 8h timeout; expected finish ~06:00 CDT 2026-06-18
-- tmux session `dist1` on head; log: `/proj/cdfuzzing-PG0/distributed/dist1_orch.log`
-- Full reference: CLOUDLAB.md. Smoke test (afl+aflcd, sqlite3, 10min) passed 2026-06-17.
-- **dist1 uses A/B per-rep parameter design** — see DECISIONS.md and worker-run.sh comments.
-- Results land at: `/proj/cdfuzzing-PG0/distributed/dist1/ar/<fuzzer>/<target>/<program>/<rep>/`
-- Analysis runs automatically via merge-results.sh at completion.
+**Distributed CloudLab experiment — `dist1` COMPLETE**
+- 24 workers, launched 2026-06-17 20:20 CDT, finished 2026-06-18 ~05:20 CDT
+- Results: `/proj/cdfuzzing-PG0/distributed/dist1/ar/` | Plots: `/proj/cdfuzzing-PG0/distributed/dist1/plots/` (55 files)
+- A/B per-rep parameter design; analysis complete via plot_seed4.py
+- **Bugs found during dist1 analysis (all fixed for dist2):**
+  1. `honggfuzzcd` missing from PAIRS in plot_seed4.py → added
+  2. `honggfuzzcd` CD init race: `initial_corpus_count=0` → all 17512 drifts detected, 0 resets fired; fixed with lazy init in `honggfuzz.c:driftCycle()`
+  3. `fairfuzzcd` blacklist trap: FairFuzz branch blacklist fills → fuzzer spins 21M queue cycles with 0 mutations; fixed with `-q 1` in run.sh + FairFuzz state reset in `perform_corpus_reset()`
+
+**Distributed CloudLab experiment — `dist2` RUNNING**
+- Launched 2026-06-18 ~06:30 CDT; 8h timeout; expected finish ~14:30 CDT 2026-06-18
+- tmux session `dist2` on head; log: `/proj/cdfuzzing-PG0/distributed/dist2_orch.log`
+- **Both reps use the same winning params** (genuine repetitions, not A/B)
+- Winning params: aflcd C=3/SF=0.5, aflpluspluscd C=8/SF=0.5, fairfuzzcd C=3/SF=0.5, moptaflcd C=5/SF=0.3, aflfastcd C=3/SF=0.5, honggfuzzcd C=5/SF=0.5
+- Results land at: `/proj/cdfuzzing-PG0/distributed/dist2/ar/<fuzzer>/<target>/<program>/<rep>/`
 
 ## Important Files
 
 - `cdfuzzing/plot_seed4.py`: main analysis script; reads from `~/experiment_results/seed_4/ar/`; outputs to `~/cdfuzzing/plots_seed4/`
-- `cdfuzzing/cloudlab/worker-run.sh`: per-worker captain runner; **contains per-rep A/B CD parameter selection block** (see DECISIONS.md); deployed to all 24 workers.
+- `cdfuzzing/cloudlab/worker-run.sh`: per-worker captain runner; **dist2: both reps use winning params from dist1 A/B** (see DECISIONS.md); deployed to all 24 workers via scp (GitHub SSH push blocked).
 - `cdfuzzing/cloudlab/orchestrate.sh`: head dispatcher; poll interval 60s for dist1
 - `cdfuzzing/magma/tools/captain/captainrc_batch2`: captainrc for moptafl+moptaflcd+afl+aflcd
 - `cdfuzzing/magma/tools/captain/captainrc_batch3`: captainrc for aflfast+aflfastcd+honggfuzz+honggfuzzcd (batch 3 was stopped early due to disk)
@@ -49,16 +56,28 @@ the head node. See CLOUDLAB.md for full details.
 - `cdfuzzing/profile.py`: CloudLab geni-lib profile (repo root for git discovery)
 - `cdfuzzing/cloudlab/`: setup-node.sh, worker-run.sh, orchestrate.sh, merge-results.sh
 - `cdfuzzing/CLOUDLAB.md`: full reference for the distributed experiment
-- `/proj/cdfuzzing-PG0/distributed/dist1_orch.log`: live orchestrator log for dist1
+- `/proj/cdfuzzing-PG0/distributed/dist1_orch.log`: orchestrator log for dist1 (complete)
+- `/proj/cdfuzzing-PG0/distributed/dist2_orch.log`: live orchestrator log for dist2
 - `/proj/cdfuzzing-PG0/distributed/dist1/`: NFS results dir for dist1
+- `/proj/cdfuzzing-PG0/distributed/dist2/`: NFS results dir for dist2
 
 ## Commands That Worked
 
 ```bash
-# Monitor dist1 campaign (running ~20:20 CDT Jun 17 → ~06:00 CDT Jun 18)
-tail -f /proj/cdfuzzing-PG0/distributed/dist1_orch.log
+# Monitor dist2 campaign (running ~06:30 CDT Jun 18 → ~14:30 CDT Jun 18)
+tail -f /proj/cdfuzzing-PG0/distributed/dist2_orch.log
 # or live: ssh head, then:
-tmux attach -t dist1     # detach: Ctrl-B D
+tmux attach -t dist2     # detach: Ctrl-B D
+
+# Analyze dist2 when complete
+CDFUZZ_BASE=/proj/cdfuzzing-PG0/distributed/dist2 \
+CDFUZZ_OUTDIR=/proj/cdfuzzing-PG0/distributed/dist2/plots \
+python3 /local/repository/plot_seed4.py
+
+# Sync code changes to workers (GitHub SSH not set up — use scp)
+for ip in $(grep -v '^#\|^head' /proj/cdfuzzing-PG0/cluster/manifest.txt | awk '{print $2}'); do
+  scp -i /proj/cdfuzzing-PG0/cluster/ssh/id_rsa FILE $ip:/local/repository/FILE &
+done; wait
 
 # Re-run analysis manually if auto-merge fails at end
 CDFUZZ_BASE=/proj/cdfuzzing-PG0/distributed/dist1 \

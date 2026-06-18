@@ -185,7 +185,7 @@ Summary:
 
 ---
 
-## distributed (CloudLab): dist1 — all 12 fuzzers, 8h, multi-node (RUNNING)
+## distributed (CloudLab): dist1 — all 12 fuzzers, 8h, multi-node (COMPLETE)
 
 Goal:
 Replace the single-machine seed-by-seed workflow with one node per
@@ -209,22 +209,67 @@ Configuration:
 - Worker run log: `/mydata/dist1-<fuzzer>-<rep>.boot.log` on each worker
 - Merge target: `/proj/cdfuzzing-PG0/distributed/dist1/`
 
-Output (expected):
+Output:
 - `/proj/cdfuzzing-PG0/distributed/dist1/ar/<fuzzer>/<target>/<program>/<rep>/`
-- `/proj/cdfuzzing-PG0/distributed/dist1/plots/` (from `plot_seed4.py` via CDFUZZ_BASE)
-- `.../status/*.done|.failed` markers
-- `/proj/cdfuzzing-PG0/distributed/dist1_orch.log` (live orchestrator log)
+- `/proj/cdfuzzing-PG0/distributed/dist1/plots/` (55 files from `plot_seed4.py`)
+- `/proj/cdfuzzing-PG0/distributed/dist1_orch.log`
 
 Status:
-RUNNING — dispatched 2026-06-17 20:20 CDT; expected finish ~06:00 CDT 2026-06-18.
-All 24 workers dispatched (0 skipped). Polling every 60s.
+COMPLETE — finished 2026-06-18 ~05:20 CDT. All 24 workers done, 0 failed.
+
+Summary:
+| Pair | Δbugs | Δcov% | Resets | Notes |
+|---|---|---|---|---|
+| moptafl→moptaflcd | +3 | +6.3% | 25 | Best. sqlite3 +89%. |
+| aflfast→aflfastcd | +1 | +1.0% | 3 | Modest positive. |
+| afl→aflcd | +0 | +5.7% | 6 | Good coverage gain. |
+| aflplusplus→aflpluspluscd | +0 | -0.2% | 18 | Near neutral. |
+| fairfuzz→fairfuzzcd | -5 | -14.4% | 0 | BUG: blacklist trap (fixed). |
+| honggfuzz→honggfuzzcd | -3 | +3.3% | 0 | BUG: CD init race (fixed). |
+
+Bugs found and fixed (all in codebase for dist2):
+- `plot_seed4.py`: honggfuzz missing from PAIRS; get_final_cov() fallback for output/ layout;
+  parse_drift_log() output/ path for honggfuzz family
+- `honggfuzzcd/newsrc/honggfuzz.c`: lazy initial_corpus_count in driftCycle() —
+  dist1 had 17512 drifts detected, 0 resets fired (all blocked by initial_corpus_count==0)
+- `fairfuzzcd/newsrc/afl-fuzz.c` + both fairfuzz*/run.sh: FairFuzz blacklist trap —
+  `-q 1` enables vanilla AFL fallback when stuck; perform_corpus_reset() now clears
+  hit_bits/blacklist/fuzzed_branches so CD resets don’t re-trigger the stuck state
 
 Notes:
-dist1 was preceded by smoke1 which verified the full pipeline.
-queue/ is excluded from rsync (fuzzer_stats, plot_data, drift_log.csv, monitor/ only).
-Analysis auto-runs via merge-results.sh when all workers complete.
-If auto-analysis fails, run manually:
-  CDFUZZ_BASE=/proj/cdfuzzing-PG0/distributed/dist1 \
-  CDFUZZ_OUTDIR=/proj/cdfuzzing-PG0/distributed/dist1/plots \
-  python3 /local/repository/plot_seed4.py
+dist1 A/B parameter comparison (per-rep different params) produced winning params
+for dist2. Files deployed to workers via scp (git push to GitHub SSH blocked on head node).
+
+---
+
+## distributed (CloudLab): dist2 — all 12 fuzzers, 8h, winning params (RUNNING)
+
+Goal:
+Replicate dist1 with winning CD parameters on both reps for each fuzzer.
+Both reps are genuine statistical repetitions (not A/B). Also validates the three
+bug fixes applied after dist1: honggfuzz.c CD init, FairFuzz blacklist trap,
+FairFuzz state reset on corpus reset.
+
+Command:
+```bash
+cd /local/repository/cloudlab
+./orchestrate.sh --run-id dist2 --timeout 8h
+# launched in tmux session 'dist2' on head, 2026-06-18 ~06:30 CDT
+```
+
+Configuration:
+- Same cluster (25 nodes), same targets, same programs as dist1
+- Winning params: aflcd C=3/SF=0.5, aflpluspluscd C=8/SF=0.5, fairfuzzcd C=3/SF=0.5,
+  moptaflcd C=5/SF=0.3, aflfastcd C=3/SF=0.5, honggfuzzcd C=5/SF=0.5
+- Baselines: both reps identical (unchanged)
+- Code fixes active: honggfuzz.c lazy init, fairfuzz -q 1, perform_corpus_reset() state reset
+
+Output:
+- `/proj/cdfuzzing-PG0/distributed/dist2/ar/<fuzzer>/<target>/<program>/<rep>/`
+- `/proj/cdfuzzing-PG0/distributed/dist2/plots/` (from plot_seed4.py)
+- `/proj/cdfuzzing-PG0/distributed/dist2_orch.log`
+
+Status:
+RUNNING — dispatched 2026-06-18 06:30 CDT; expected finish ~14:30 CDT 2026-06-18.
+All 24 workers dispatched (0 skipped).
 

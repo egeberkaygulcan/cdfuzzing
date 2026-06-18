@@ -2,22 +2,21 @@
 
 ## High Priority
 
-- [ ] **Monitor dist1** — expected finish ~06:00 CDT 2026-06-18. Check:
-  `tail -f /proj/cdfuzzing-PG0/distributed/dist1_orch.log`
-  or `tmux attach -t dist1` on head. Extend CloudLab lease if needed before campaign ends.
-- [ ] **Review dist1 analysis output** at `/proj/cdfuzzing-PG0/distributed/dist1/plots/`.
-  If auto-analysis fails after all workers done, run manually:
-  `CDFUZZ_BASE=/proj/cdfuzzing-PG0/distributed/dist1 CDFUZZ_OUTDIR=.../dist1/plots python3 /local/repository/plot_seed4.py`
-- [ ] **Commit the 6 fixed files** in `/local/repository` (branch main @ c85513f) before the
-  CloudLab lease expires — CLOUDLAB.md, profile.py, cloudlab/{setup-node,worker-run,orchestrate,merge-results}.sh.
-  Without this commit, a fresh re-instantiation gets the unfixed profile.py boot command.
-- [ ] **Interpret A/B results from dist1**: compare rep 0 vs rep 1 per CD fuzzer to choose
-  the better CONSECUTIVE/STAGNATION_FACTOR. Key questions:
-  - fairfuzzcd: did C=3 or C=2 fire resets? Which gave better bugs/coverage?
-  - moptaflcd: did C=8 reduce reset rate? Did SF=0.3 help?
-  - aflpluspluscd: is C=6 or C=8 more calibrated?
-- [ ] **Run dist2** with winning parameters on both reps (identical) — proper 2-rep statistical
-  repetitions needed for confidence intervals / Mann-Whitney tests on CD-vs-baseline.
+- [ ] **Monitor dist2** — expected finish ~14:30 CDT 2026-06-18. Check:
+  `tail -f /proj/cdfuzzing-PG0/distributed/dist2_orch.log`
+  or `tmux attach -t dist2` on head. Extend CloudLab lease if needed before campaign ends.
+- [ ] **Review dist2 analysis output** at `/proj/cdfuzzing-PG0/distributed/dist2/plots/`.
+  Run analysis manually when complete:
+  `CDFUZZ_BASE=/proj/cdfuzzing-PG0/distributed/dist2 CDFUZZ_OUTDIR=.../dist2/plots python3 /local/repository/plot_seed4.py`
+- [ ] **Push commits to GitHub** — 4 local commits not yet pushed (SSH key not trusted on head).
+  Commits: b97ea801 (dist1 complete + infra fixes), 0a60bf3c (FairFuzz blacklist trap fix),
+  95b34cc0 (DECISIONS.md), 03cc0915 (worker-run.sh dist2 params).
+  Option: `scp` the git bundle to a machine that has GitHub SSH access, then push.
+- [ ] **Interpret dist2 results**: both reps same params → compute per-fuzzer mean Δbugs/Δcov%
+  and run Mann-Whitney U tests CD vs baseline. Key questions:
+  - Did honggfuzzcd resets fire correctly now (lazy init fix)? Check reset_report for dist2.
+  - Did fairfuzzcd recover (blacklist trap fix + -q 1)? Check bug counts on libpng/libtiff/php.
+  - Do winning params generalize? Compare dist2 vs dist1 rep-0 winning side.
 
 ## Medium Priority
 
@@ -54,3 +53,10 @@
 - [x] Design and implement A/B per-rep CD parameter search for dist1 (worker-run.sh) — 2026-06-17
 - [x] Deploy updated worker-run.sh to all 24 workers — 2026-06-17
 - [x] Launch dist1 in tmux (8h, all 12 fuzzers × 2 reps, 24 workers) — 2026-06-17 ~20:20 CDT
+- [x] dist1 COMPLETE: all 24 workers done, results at /proj/cdfuzzing-PG0/distributed/dist1/ — 2026-06-18 ~05:20 CDT
+- [x] Fix plot_seed4.py: add honggfuzz to PAIRS, get_final_cov() fallback, output/drift_log.csv path — 2026-06-18
+- [x] Fix honggfuzzcd CD init race (initial_corpus_count sampled before corpus loads → 0 resets) — 2026-06-18
+- [x] Fix FairFuzz blacklist trap: -q 1 in run.sh + state reset in perform_corpus_reset() — 2026-06-18
+- [x] Select dist2 winning params from dist1 A/B analysis; update worker-run.sh — 2026-06-18
+- [x] Deploy 5 fixed files to all 24 workers via scp — 2026-06-18
+- [x] Launch dist2 in tmux (8h, all 12 fuzzers × 2 reps, winning params) — 2026-06-18 ~06:30 CDT
