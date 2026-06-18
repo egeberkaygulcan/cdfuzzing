@@ -8,17 +8,30 @@
 # directory under the repetition id taken from this node's --rep.
 #
 # Usage:
-#   worker-run.sh --fuzzer F --rep N --run-id ID --timeout 24h \
+#   worker-run.sh --fuzzer F --rep N --run-id ID --timeout 8h \
 #                 [--targets "sqlite3 libpng ..."] [--repo PATH] [--shared PATH]
+#
+# Parameter search design (per-rep CD config):
+#   CD fuzzers run two different parameter sets across their two rep nodes so
+#   each 2-node pair acts as a single-shot A/B comparison rather than a plain
+#   repetition.  Baselines use the same config on both reps (pure repetitions).
+#
+#   Rep 0 (config A)          Rep 1 (config B)          Rationale
+#   aflcd         C=5  SF=0.5  C=3  SF=0.5  reference vs more aggressive
+#   aflpluspluscd C=6  SF=0.5  C=8  SF=0.5  two degrees of reduction from 2.38/prog
+#   fairfuzzcd    C=3  SF=0.5  C=2  SF=0.5  both more aggressive (C=5 fired 0 resets)
+#   moptaflcd     C=8  SF=0.5  C=5  SF=0.3  raise bar vs tighten stagnation guard
+#   aflfastcd     C=5  SF=0.5  C=3  SF=0.5  default vs more aggressive
+#   honggfuzzcd   C=5  SF=0.5  C=3  SF=0.5  default vs more aggressive
 ##
 set -uo pipefail
 
 FUZZER=""
 REP="0"
 RUN_ID=""
-TIMEOUT="24h"
+TIMEOUT="8h"
 TARGETS="sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl"
-REPO="/users/eldarfin/cdfuzzing"
+REPO="/local/repository"
 SHARED="/proj/cdfuzzing-PG0"
 
 # Inherit role defaults written at boot if present.
@@ -55,6 +68,46 @@ mkdir -p "$LOCALWORK" "$STATUS_DIR" "$SHARED_RUN/log"
 rm -f "$STATUS_DIR/${NODE_TAG}.done" "$STATUS_DIR/${NODE_TAG}.failed"
 echo "$(date '+%F %T') started on $(hostname)" > "$STATUS_DIR/${NODE_TAG}.running"
 
+# --- Per-rep CD parameter selection (A/B parameter search) ----------------
+# CD fuzzers assign different CONSECUTIVE / STAGNATION_FACTOR per rep so each
+# node tests a distinct config.  Baselines are unaffected (vars exported but
+# the CD module is absent).
+CD_CONSECUTIVE=5
+CD_STAGNATION=0.5
+if [[ "$FUZZER" == *cd ]]; then
+    case "$FUZZER" in
+        aflcd)
+            # seed_4: 0.43 resets/prog — well-calibrated; explore tighter bound
+            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=5 || CD_CONSECUTIVE=3
+            ;;
+        aflpluspluscd)
+            # seed_4: 2.38 resets/prog — slightly high; test two reductions
+            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=6 || CD_CONSECUTIVE=8
+            ;;
+        fairfuzzcd)
+            # seed_4: 0 resets (C=5 filtered 100% of drifts); both more aggressive
+            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=3 || CD_CONSECUTIVE=2
+            ;;
+        moptaflcd)
+            # seed_4: 3.62 resets/prog; raise bar vs tighten stagnation guard
+            if [ "$REP" -eq 0 ]; then
+                CD_CONSECUTIVE=8; CD_STAGNATION=0.5
+            else
+                CD_CONSECUTIVE=5; CD_STAGNATION=0.3
+            fi
+            ;;
+        aflfastcd)
+            # seed_4: partial — unknown calibration; default vs more aggressive
+            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=5 || CD_CONSECUTIVE=3
+            ;;
+        honggfuzzcd)
+            # seed_4: never ran — default vs more aggressive
+            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=5 || CD_CONSECUTIVE=3
+            ;;
+    esac
+fi
+log "CD params: CONSECUTIVE=$CD_CONSECUTIVE STAGNATION_FACTOR=$CD_STAGNATION"
+
 # --- Generate a single-fuzzer captainrc -----------------------------------
 CAPTAINRC="$LOCALWORK/captainrc_${NODE_TAG}"
 {
@@ -77,9 +130,9 @@ CAPTAINRC="$LOCALWORK/captainrc_${NODE_TAG}"
     echo "export AFL_DRIFT_HAVOC_BOOST=2"
     echo "export AFL_DRIFT_BOOST_CYCLES=1"
     echo "export AFL_DRIFT_COOLDOWN=10"
-    echo "export AFL_DRIFT_CONSECUTIVE=5"
+    echo "export AFL_DRIFT_CONSECUTIVE=$CD_CONSECUTIVE"
     echo "export AFL_DRIFT_EMA_ALPHA=0.1"
-    echo "export AFL_DRIFT_STAGNATION_FACTOR=0.5"
+    echo "export AFL_DRIFT_STAGNATION_FACTOR=$CD_STAGNATION"
 } > "$CAPTAINRC"
 log "captainrc -> $CAPTAINRC"
 

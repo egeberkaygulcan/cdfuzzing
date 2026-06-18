@@ -3,9 +3,10 @@
 ## Current Goal
 
 Evaluate CD-Fuzzing (concept drift detection integrated into AFL-family fuzzers) on the Magma
-benchmark. Seed 4 experiments are complete for 4 fuzzer pairs. **Active next step: run the
-distributed CloudLab experiment** (one node per fuzzer×repetition, head-dispatched + merged)
-to get multi-rep results for all 12 fuzzers — see CLOUDLAB.md. This is the work for the new session.
+benchmark. **`dist1` (8h, all 12 fuzzers × 2 reps × 9 targets on 24 CloudLab c220g1 nodes) was
+launched 2026-06-17 ~20:20 CDT and is currently running.** Expected finish ~06:00 CDT 2026-06-18.
+Monitor: `tail -f /proj/cdfuzzing-PG0/distributed/dist1_orch.log` or `tmux attach -t dist1` on
+the head node. See CLOUDLAB.md for full details.
 
 ## Current State
 
@@ -25,15 +26,20 @@ to get multi-rep results for all 12 fuzzers — see CLOUDLAB.md. This is the wor
 - Key outputs: `summary_table.txt`, `parameter_eval.txt`, `bug_report.txt`, `reset_report.txt`
 - Coverage line plots, bug bar charts, drift signal plots, reset timing/summary plots
 
-**Distributed CloudLab experiment — SCRIPTS READY, NOT YET RUN**
-- Root `profile.py` (geni-lib) + `cloudlab/{setup-node,worker-run,orchestrate,merge-results}.sh`
-- All syntax-checked; profile.py moved to repo root so CloudLab git discovery finds it
-- `plot_seed4.py` now honors `CDFUZZ_BASE` / `CDFUZZ_OUTDIR` env vars for merged-run analysis
-- Full reference: CLOUDLAB.md. First real instantiation/run is the new session's task.
+**Distributed CloudLab experiment — `dist1` RUNNING**
+- 24 workers dispatched 2026-06-17 ~20:20 CDT; 8h timeout; expected finish ~06:00 CDT 2026-06-18
+- tmux session `dist1` on head; log: `/proj/cdfuzzing-PG0/distributed/dist1_orch.log`
+- Full reference: CLOUDLAB.md. Smoke test (afl+aflcd, sqlite3, 10min) passed 2026-06-17.
+- **dist1 uses A/B per-rep parameter design** — see DECISIONS.md and worker-run.sh comments.
+- Results land at: `/proj/cdfuzzing-PG0/distributed/dist1/ar/<fuzzer>/<target>/<program>/<rep>/`
+- Analysis runs automatically via merge-results.sh at completion.
 
 ## Important Files
 
-- `cdfuzzing/plot_seed4.py`: main analysis script; reads from `~/experiment_results/seed_4/ar/`; outputs to `~/cdfuzzing/plots_seed4/`- `cdfuzzing/magma/tools/captain/captainrc_batch2`: captainrc for moptafl+moptaflcd+afl+aflcd
+- `cdfuzzing/plot_seed4.py`: main analysis script; reads from `~/experiment_results/seed_4/ar/`; outputs to `~/cdfuzzing/plots_seed4/`
+- `cdfuzzing/cloudlab/worker-run.sh`: per-worker captain runner; **contains per-rep A/B CD parameter selection block** (see DECISIONS.md); deployed to all 24 workers.
+- `cdfuzzing/cloudlab/orchestrate.sh`: head dispatcher; poll interval 60s for dist1
+- `cdfuzzing/magma/tools/captain/captainrc_batch2`: captainrc for moptafl+moptaflcd+afl+aflcd
 - `cdfuzzing/magma/tools/captain/captainrc_batch3`: captainrc for aflfast+aflfastcd+honggfuzz+honggfuzzcd (batch 3 was stopped early due to disk)
 - `cdfuzzing/magma/tools/captain/run_batches.sh`: sequential batch runner (batch1→2→3 with Docker cleanup)
 - `cdfuzzing/magma/fuzzers/aflpluspluscd/fetch.sh`: contains AFL++ bug fixes (alias table, top_rated[], splice loops — applied via sed)
@@ -43,11 +49,23 @@ to get multi-rep results for all 12 fuzzers — see CLOUDLAB.md. This is the wor
 - `cdfuzzing/profile.py`: CloudLab geni-lib profile (repo root for git discovery)
 - `cdfuzzing/cloudlab/`: setup-node.sh, worker-run.sh, orchestrate.sh, merge-results.sh
 - `cdfuzzing/CLOUDLAB.md`: full reference for the distributed experiment
+- `/proj/cdfuzzing-PG0/distributed/dist1_orch.log`: live orchestrator log for dist1
+- `/proj/cdfuzzing-PG0/distributed/dist1/`: NFS results dir for dist1
 
 ## Commands That Worked
 
 ```bash
-# Reproduce the full analysis (delete plots_seed4 first to get a clean run)
+# Monitor dist1 campaign (running ~20:20 CDT Jun 17 → ~06:00 CDT Jun 18)
+tail -f /proj/cdfuzzing-PG0/distributed/dist1_orch.log
+# or live: ssh head, then:
+tmux attach -t dist1     # detach: Ctrl-B D
+
+# Re-run analysis manually if auto-merge fails at end
+CDFUZZ_BASE=/proj/cdfuzzing-PG0/distributed/dist1 \
+CDFUZZ_OUTDIR=/proj/cdfuzzing-PG0/distributed/dist1/plots \
+python3 /local/repository/plot_seed4.py
+
+# Reproduce the full seed_4 analysis (delete plots_seed4 first to get a clean run)
 cd ~/cdfuzzing && rm -rf plots_seed4 && python3 plot_seed4.py
 
 # Fix Docker socket permissions after node reboot
@@ -94,26 +112,46 @@ docker builder prune -af
   This inflates coverage delta numbers. The parameter eval's mean_Δcov% values should be
   interpreted as corpus size change, not edge coverage change.
 - Only 1 seed (seed=4). Results need multiple repetitions for statistical validity.
-- moptaflcd resets/program is high (3.62) — MOpt's mutation scheduling amplifies KS fluctuations;
-  may need a higher CONSECUTIVE for moptafl.
-- fairfuzzcd fired 0 resets out of 50 drifts (stagnation guard too conservative for slow schedulers).
+  dist1 gives 2 reps for each fuzzer but uses A/B parameters for CD variants — not pure
+  statistical repetitions. Pure repetitions (fixed params) are needed for confidence intervals.
+- moptaflcd resets/program was high (3.62) in seed_4 — dist1 tests C=8/SF=0.5 (rep 0) and
+  C=5/SF=0.3 (rep 1) as alternatives.
+- fairfuzzcd fired 0 resets in seed_4 (stagnation guard too conservative) — dist1 tests C=3
+  (rep 0) and C=2 (rep 1).
+- profile.py boot-time auto-provision fix is **unverified on a fresh re-instantiation** — the
+  manual procedure in CLOUDLAB.md is the proven path if nodes need to be re-provisioned.
+- 6 files in `/local/repository` have uncommitted changes (CLOUDLAB.md, profile.py, 4
+  cloudlab/*.sh). Git commit has not been made — if the experiment is re-instantiated, a fresh
+  git clone will miss these fixes. Should commit before experiment expires.
 
 ## Next Steps
 
-1. **Run the distributed CloudLab experiment** (CLOUDLAB.md) — gives multi-rep results for all 12
-   fuzzers including honggfuzz, on per-node local disk (fixes the seed_4 disk + missing-pair gaps).
-2. **Write paper section on seed_4 results** using `summary_table.txt` and `parameter_eval.txt` as ground truth.
-3. **Tune parameters per fuzzer family** based on parameter eval findings (see DECISIONS.md).
-4. **Export plots** for paper figures from the merged run dir or `plots_seed4/`.
+1. **Wait for dist1 to finish** (~06:00 CDT 2026-06-18). Monitor via orchestrator log or tmux.
+2. **Review dist1 analysis output** at `/proj/cdfuzzing-PG0/distributed/dist1/plots/`.
+   If auto-analysis fails, run manually (see Commands above).
+3. **Interpret A/B parameter results**: compare rep 0 vs rep 1 for each CD fuzzer to pick
+   the better CONSECUTIVE/STAGNATION_FACTOR setting. Especially watch fairfuzzcd and moptaflcd.
+4. **Commit the 6 fixed files** to `/local/repository` on branch main before the CloudLab
+   lease expires (so profile.py boot fix is captured for re-instantiation).
+5. **Run dist2** (if dist1 shows clear parameter winners) with the best parameters, both reps
+   identical per fuzzer — proper 2-rep statistical repetitions for confidence intervals.
+6. **Write paper section on seed_4 results** using `summary_table.txt` and `parameter_eval.txt`.
+7. **Tune further** if dist1 reveals new pathologies (see DECISIONS.md for A/B rationale).
+8. **Extend CloudLab lease** if needed via the web UI (Experiment → Extend).
 
 ## Assumptions
 
-- CloudLab node `amd149.utah.cloudlab.us` (hostname: `node-0`), user `eldarfin`
-- 63GB disk — queue/ directories in results consume ~8GB; prune before running honggfuzz
-- Python deps installed to `~/.local/` via `pip3 install matplotlib numpy`
+- CloudLab experiment `eldarfin-308618` — Wisconsin datacenter, c220g1 nodes, Ubuntu 22.04.2 LTS
+- Head: `head.eldarfin-308618.cdfuzzing-pg0.wisc.cloudlab.us` (public IP 128.105.145.221)
+- 25 nodes: head (192.168.1.1) + 24 workers (192.168.1.10–.33)
+- `/users/eldarfin` is **local per node** (NOT NFS). Repo is `/local/repository` (per-node checkout).
+- Only `/proj/cdfuzzing-PG0` (100GB NFS) and `/share` are shared across nodes.
+- Workers: ~87GB free per node on `/mydata`; Docker data-root on `/mydata`
+- Shared cluster SSH keypair: `/proj/cdfuzzing-PG0/cluster/ssh/id_rsa` — installed to each node's `~/.ssh`
+- Python deps (matplotlib, numpy) installed system-wide via apt on head node
+- `NO_ARCHIVE=1` was set in all seed_4 captainrc files — results are raw workdirs, not `.tar.gz`
 - All CD fuzzers patched and built — do not re-run `fetch.sh` without checking for regressions
-- `NO_ARCHIVE=1` was set in all captainrc files — results are raw workdirs, not `.tar.gz`
 
 ## Last Updated
 
-2026-06-17
+2026-06-17 (session 2: CloudLab provisioning, smoke test, A/B param design, dist1 launched)

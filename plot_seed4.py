@@ -67,8 +67,8 @@ def find_plot_data(fuzzer, target):
     """Find plot_data file for a fuzzer/target combination (any program)."""
     results = {}
     for root_dir in [AR, CACHE]:
-        pattern = os.path.join(root_dir, fuzzer, target, "*", "0", "findings")
-        for findings_dir in glob.glob(pattern):
+        pattern = os.path.join(root_dir, fuzzer, target, "*", "*", "findings")
+        for findings_dir in sorted(glob.glob(pattern)):
             # Check for plot_data directly or in default/ subdir
             for pd_path in [
                 os.path.join(findings_dir, "plot_data"),
@@ -126,8 +126,8 @@ def parse_fuzzer_stats(fuzzer, target):
     """Parse fuzzer_stats for final summary."""
     results = {}
     for root_dir in [AR, CACHE]:
-        pattern = os.path.join(root_dir, fuzzer, target, "*", "0", "findings")
-        for findings_dir in glob.glob(pattern):
+        pattern = os.path.join(root_dir, fuzzer, target, "*", "*", "findings")
+        for findings_dir in sorted(glob.glob(pattern)):
             for stats_path in [
                 os.path.join(findings_dir, "fuzzer_stats"),
                 os.path.join(findings_dir, "default", "fuzzer_stats"),
@@ -147,8 +147,9 @@ def parse_fuzzer_stats(fuzzer, target):
 def find_monitor_data(fuzzer, target, program):
     """Parse monitor canary files for bug reaching/triggering."""
     for root_dir in [AR, CACHE]:
-        mon_dir = os.path.join(root_dir, fuzzer, target, program, "0", "monitor")
-        if os.path.isdir(mon_dir):
+        for mon_dir in sorted(glob.glob(
+                os.path.join(root_dir, fuzzer, target, program, "*", "monitor"))):
+          if os.path.isdir(mon_dir):
             timestamps = sorted([int(f) for f in os.listdir(mon_dir) if f.isdigit()])
             if not timestamps:
                 continue
@@ -469,12 +470,12 @@ def plot_bugs_triggered(bug_data):
 def parse_drift_log(fuzzer, target, program):
     """Parse drift_log.csv for a CD fuzzer, return rows list or None."""
     for root_dir in [AR, CACHE]:
-        for drift_path in [
-            os.path.join(root_dir, fuzzer, target, program, "0",
-                         "findings", "drift_log.csv"),
-            os.path.join(root_dir, fuzzer, target, program, "0",
-                         "findings", "default", "drift_log.csv"),
-        ]:
+        for drift_path in sorted(glob.glob(
+                os.path.join(root_dir, fuzzer, target, program, "*",
+                             "findings", "drift_log.csv"))) + \
+                sorted(glob.glob(
+                os.path.join(root_dir, fuzzer, target, program, "*",
+                             "findings", "default", "drift_log.csv"))):
             if os.path.isfile(drift_path):
                 try:
                     with open(drift_path) as f:

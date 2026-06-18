@@ -22,7 +22,7 @@ FUZZER=""
 REP="0"
 FUZZERS=""
 NPF="1"
-REPO="/users/eldarfin/cdfuzzing"
+REPO="/local/repository"
 SHARED="/proj/cdfuzzing-PG0"
 START_IP=10   # first worker is 192.168.1.10 (must match profile.py)
 
@@ -40,8 +40,14 @@ done
 
 log() { echo "[$(date '+%F %T')] setup-node($ROLE): $*"; }
 
-# The experiment user (the account that owns the shared home / runs sudo).
-USER_NAME="${SUDO_USER:-$(basename "$(dirname "$REPO")")}"
+# The experiment user = owner of the per-node git checkout. CloudLab chowns
+# /local/repository to the experiment user during the git-clone startup step, so
+# this is reliable. SUDO_USER is NOT: at boot this runs under the geniuser
+# startup context, and when re-run by hand it runs as plain root over SSH.
+USER_NAME="$(stat -c '%U' "$REPO" 2>/dev/null)"
+if [ -z "$USER_NAME" ] || [ "$USER_NAME" = "root" ] || [ "$USER_NAME" = "UNKNOWN" ]; then
+    USER_NAME="${SUDO_USER:-eldarfin}"
+fi
 USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 [ -n "$USER_HOME" ] || USER_HOME="/users/$USER_NAME"
 
@@ -102,21 +108,29 @@ JSON
     usermod -aG docker "$USER_NAME" 2>/dev/null || true
 fi
 
-# --- 3. Passwordless inter-node SSH via the shared home .ssh ---------------
-# The home directory is one NFS share across every node, so this only has to
-# succeed once; a flock prevents the 25 nodes from racing on the same files.
-sudo -u "$USER_NAME" HOME="$USER_HOME" bash <<'SSHEOF'
+# --- 3. Passwordless inter-node SSH via a single SHARED cluster keypair -----
+# Home directories are NOT NFS-shared on this cluster, so one ~/.ssh cannot
+# propagate everywhere. Keep ONE cluster keypair on the shared project NFS
+# ($SHARED/cluster/ssh) and install it into every node's local ~/.ssh. The NFS
+# mount uses local_lock, so flock is not cluster-wide; elect a single generator
+# with an atomic mkdir lock plus a .ready marker.
+CLUSTER_SSH="$SHARED/cluster/ssh"
+mkdir -p "$CLUSTER_SSH"
+chown "$USER_NAME":"$(id -gn "$USER_NAME")" "$CLUSTER_SSH" 2>/dev/null || true
+if mkdir "$CLUSTER_SSH/.genlock" 2>/dev/null; then
+    sudo -u "$USER_NAME" ssh-keygen -t rsa -b 2048 -N "" -f "$CLUSTER_SSH/id_rsa" -q
+    : > "$CLUSTER_SSH/.ready"
+else
+    for _ in $(seq 1 120); do [ -f "$CLUSTER_SSH/.ready" ] && break; sleep 2; done
+fi
+sudo -u "$USER_NAME" env HOME="$USER_HOME" CLUSTER_SSH="$CLUSTER_SSH" bash <<'SSHEOF'
 set -e
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
-exec 9>~/.ssh/.cdfuzz-cluster.lock
-flock 9
-if [ ! -f ~/.ssh/id_rsa ]; then
-    ssh-keygen -t rsa -b 2048 -N "" -f ~/.ssh/id_rsa -q
-fi
-touch ~/.ssh/authorized_keys
+install -m 600 "$CLUSTER_SSH/id_rsa"     ~/.ssh/id_rsa
+install -m 644 "$CLUSTER_SSH/id_rsa.pub" ~/.ssh/id_rsa.pub
+touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
 grep -qxF "$(cat ~/.ssh/id_rsa.pub)" ~/.ssh/authorized_keys \
     || cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
-chmod 600 ~/.ssh/authorized_keys
 if ! grep -q "cdfuzz-cluster" ~/.ssh/config 2>/dev/null; then
     cat >> ~/.ssh/config <<'CFG'
 
@@ -129,7 +143,7 @@ CFG
     chmod 600 ~/.ssh/config
 fi
 SSHEOF
-log "SSH cluster keys ready"
+log "SSH cluster key installed from $CLUSTER_SSH"
 
 # --- 4. Record this node's role -------------------------------------------
 mkdir -p /local

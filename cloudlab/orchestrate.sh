@@ -25,7 +25,7 @@ DRY_RUN=0
 POLL_SECONDS=60
 
 [ -f /local/cdfuzz-role ] && . /local/cdfuzz-role 2>/dev/null
-REPO="${REPO:-/users/eldarfin/cdfuzzing}"
+REPO="${REPO:-/local/repository}"
 SHARED="${SHARED:-/proj/cdfuzzing-PG0}"
 USER_NAME="${USER_NAME:-$(whoami)}"
 

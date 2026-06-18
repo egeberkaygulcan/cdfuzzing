@@ -4,8 +4,18 @@ Reference for the distributed multi-node CD-Fuzzing campaign on CloudLab. This
 replaces the single-machine, sequential-batch workflow (seed_4) with one node
 per (fuzzer × repetition), dispatched and merged from a central head node.
 
-> Status: scripts written and syntax-checked, **NOT yet executed on CloudLab**.
-> First real run is planned for a new session.
+> Status (2026-06-17): **`dist1` is RUNNING.** Launched ~20:20 CDT 2026-06-17;
+> expected finish ~06:00 CDT 2026-06-18. Monitor:
+> `tail -f /proj/cdfuzzing-PG0/distributed/dist1_orch.log`
+> or `tmux attach -t dist1` on the head.
+>
+> Cluster: Wisconsin, `c220g1`, 25 nodes up (head + 24 workers). Docker, `/mydata`,
+> shared SSH key, and manifest verified cluster-wide. Smoke test (afl+aflcd, sqlite3,
+> 10min, 4/4 done) passed before launch.
+>
+> The original boot-time auto-setup **failed** (a quoting bug, now fixed) and the
+> design wrongly assumed a shared home FS. Both were corrected and nodes were
+> provisioned manually — see **Provisioning (what actually happened)** below.
 
 ## What it provisions
 
@@ -20,10 +30,14 @@ Each worker = one repetition (`rep 0`, `rep 1`), giving the multi-rep sample the
 seed_4 single-machine run could not produce.
 
 Each node gets a stock **Ubuntu 22.04** image; `setup-node.sh` installs Docker
-(+rsync) at boot and captain builds the Magma target images on the node (Magma
-is not baked into the image, and no custom snapshot is used). Each node also
-gets a `/mydata` blockstore (default 100GB) and a static IP on a best-effort
-private LAN.
+(+rsync) and captain builds the Magma target images on the node (Magma is not
+baked into the image, and no custom snapshot is used). Each node also gets a
+`/mydata` blockstore (default 100GB) and a static IP on a best-effort private LAN.
+
+The cdfuzzing repo is **git-cloned per node to `/local/repository`** by CloudLab's
+standard git-profile checkout (NOT to a shared home). The home FS (`/users`) is
+**local per node**, not NFS-shared; only `/proj/cdfuzzing-PG0` and `/share` are
+shared. All scripts therefore source the repo from `/local/repository`.
 
 ### Profile parameters
 
@@ -35,8 +49,8 @@ private LAN.
 | `phystype` | (blank) | leave blank to let mapper choose |
 | `blockstoreSize` | `100` GB | local `/mydata` disk |
 | `blockstoreMax` | `false` | grab whole disk instead |
-| `repoPath` | `/users/eldarfin/cdfuzzing` | shared-home checkout path |
-| `sharedDir` | `/proj/cdfuzzing-PG0` | project NFS merge target |
+| `repoPath` | `/local/repository` | per-node git checkout (home is NOT shared) |
+| `sharedDir` | `/proj/cdfuzzing-PG0` | project NFS merge target (the only shared FS) |
 | `bestEffort` | `true` | LAN maps even if bandwidth unavailable |
 
 ## Files
@@ -44,7 +58,7 @@ private LAN.
 | File | Runs on | Role |
 |---|---|---|
 | [profile.py](profile.py) | CloudLab | geni-lib RSpec; head + workers, LAN, blockstores, boot services |
-| [cloudlab/setup-node.sh](cloudlab/setup-node.sh) | every node (boot) | mount `/mydata`, install Docker (+rsync), move Docker data-root there, passwordless SSH, write manifest |
+| [cloudlab/setup-node.sh](cloudlab/setup-node.sh) | every node | mount `/mydata`, install Docker (+rsync), move Docker data-root there, install the **shared cluster SSH key** from `<sharedDir>/cluster/ssh` into each node's local `~/.ssh`, write manifest (head) |
 | [cloudlab/orchestrate.sh](cloudlab/orchestrate.sh) | head | SSH-dispatch one campaign per worker, poll status, then merge |
 | [cloudlab/worker-run.sh](cloudlab/worker-run.sh) | worker | generate single-fuzzer captainrc, run captain, rsync results to NFS (no `queue/`) |
 | [cloudlab/merge-results.sh](cloudlab/merge-results.sh) | head | inventory arrivals + run analysis |
@@ -77,17 +91,47 @@ seed argument; repetitions differ by fuzzer nondeterminism (same as seed_4).
 
 ## Prerequisites before instantiating
 
-1. The `cdfuzzing` checkout must exist on the cluster **home FS** at `repoPath`
-   (default `/users/eldarfin/cdfuzzing`) — boot scripts are sourced from
-   `<repoPath>/cloudlab/`. If `~/cdfuzzing` here is already the mounted CloudLab
-   home, this is satisfied; otherwise `git clone`/`rsync` it there first.
-2. `sharedDir` (project NFS) must be writable.
+1. The profile is created from the GitHub repo; CloudLab git-clones it to
+   `/local/repository` on every node. No shared-home checkout is needed.
+2. `sharedDir` (project NFS, `/proj/cdfuzzing-PG0`) must be writable by the
+   experiment user's group (`cdfuzzing-PG0`). The merge dir lives here.
+3. After boot, confirm every node is provisioned (Docker active, `/mydata`
+   moved, `~/.ssh/id_rsa` present). If the boot Execute service did not run
+   setup-node.sh, provision manually — see below.
 
-## Running (on the head node, after boot)
+## Provisioning (what actually happened, 2026-06-17)
+
+The boot-time `Execute` service that should run `setup-node.sh` **failed** with
+`syntax error near unexpected token` — CloudLab wraps the command in
+`/bin/bash -c "..."` and the old `boot_command()` nested double quotes
+(`REPO="..."`) plus `$(seq 1 60)` collided with that wrapper. `profile.py` is
+fixed, but the **already-running** nodes were provisioned manually from the head:
 
 ```bash
-cd /users/eldarfin/cdfuzzing/cloudlab
-./orchestrate.sh --run-id dist1 --timeout 24h
+# Head uses CloudLab's per-experiment root key (/root/.ssh/id_rsa) to reach
+# every node as root. Run head setup first (generates the shared cluster
+# SSH key on NFS + writes the manifest), then all workers from the manifest.
+sudo bash /local/repository/cloudlab/setup-node.sh head \
+  --fuzzers afl,aflplusplus,fairfuzz,moptafl,aflfast,honggfuzz,aflcd,aflpluspluscd,fairfuzzcd,moptaflcd,aflfastcd,honggfuzzcd \
+  --nodes-per-fuzzer 2 --repo /local/repository --shared /proj/cdfuzzing-PG0
+
+while read -r name ip fuzzer rep; do
+  [ "$name" = head ] && continue
+  sudo ssh -n -i /root/.ssh/id_rsa -o StrictHostKeyChecking=no root@"$name" \
+    "bash /local/repository/cloudlab/setup-node.sh worker --fuzzer $fuzzer --rep $rep \
+     --repo /local/repository --shared /proj/cdfuzzing-PG0 >/local/setup.log 2>&1"
+done < <(grep -vE '^#|^head ' /proj/cdfuzzing-PG0/cluster/manifest.txt)
+```
+
+Inter-node SSH uses a **single shared cluster keypair** generated once on NFS at
+`/proj/cdfuzzing-PG0/cluster/ssh` and installed into every node's local `~/.ssh`
+(home is not shared, so one `~/.ssh` cannot propagate by itself).
+
+## Running (on the head node, after provisioning)
+
+```bash
+cd /local/repository/cloudlab
+./orchestrate.sh --run-id dist1 --timeout 8h
 ```
 
 - Re-running the same `--run-id` **resumes**: workers already `.done` are skipped.
@@ -106,15 +150,32 @@ cd /users/eldarfin/cdfuzzing/cloudlab
 - CloudLab experiments are lease-limited — **extend** the experiment if a 24h
   campaign would outlive the default lease.
 
-## Known unknowns (verify on first run)
+## Verified on this instantiation (2026-06-17)
 
-- Scripts are unverified end-to-end; the boot-time NFS-wait, Docker data-root
-  move, and SSH key exchange have not been exercised on a real instantiation.
-- Confirm `/proj/cdfuzzing-PG0` quota is large enough for 24 workers × 9 targets
-  of merged (queue-excluded) results.
-- Confirm the manifest IP scheme in `setup-node.sh` (`START_IP=10`) matches the
-  `ip_index = 10` start in `profile.py` if either is edited.
+- 25 nodes up; LAN `192.168.1.0/24`; `/etc/hosts` names = `<fuzzer>-<rep>`
+  (`afl-0`=.10 … `honggfuzzcd-1`=.33), matching `profile.py` exactly.
+- Docker active and usable as `eldarfin` on all 24 workers; data-root on `/mydata`
+  (≈87GB free per node).
+- Magma target/fuzzer submodules populated under `/local/repository/magma`.
+- Passwordless SSH works head→worker AND worker→worker as `eldarfin` via the
+  shared cluster key.
+- `eldarfin` can create the run dir `/proj/cdfuzzing-PG0/distributed/<run-id>/`.
+
+## Known unknowns / notes from dist1
+
+- The full `orchestrate.sh → worker-run.sh → captain` pipeline was verified via
+  smoke test (smoke1: afl+aflcd, sqlite3, 10min, 4/4 done, 15 analysis files) before dist1.
+- `/proj/cdfuzzing-PG0` quota is ~100GB; queue/ is excluded from rsync so per-worker
+  footprint is small (fuzzer_stats, plot_data, drift_log.csv, monitor/ only).
+- `/proj/cdfuzzing-PG0/cluster/` is root-owned; manifest + keys inside are `eldarfin`-owned.
+- The boot-time auto-provision fix in `profile.py` is **unverified on a fresh re-instantiation**
+  — the manual procedure above is the proven path.
+- **6 files in `/local/repository` have uncommitted changes** (CLOUDLAB.md, profile.py,
+  cloudlab/{setup-node,worker-run,orchestrate,merge-results}.sh). Commit before the lease
+  expires so the next instantiation gets the fixed profile.py automatically.
+- `worker-run.sh` contains a per-rep A/B CD parameter selection block. See DECISIONS.md.
+- dist1 uses `--poll 60` (1-minute poll interval) and `--timeout 8h` per worker.
 
 ## Last Updated
 
-2026-06-17
+2026-06-17 (session 2: smoke test ✓, dist1 launched)
