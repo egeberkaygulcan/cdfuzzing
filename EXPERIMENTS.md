@@ -2,17 +2,21 @@
 
 ---
 
-## distributed (CloudLab): dist3 — all 12 fuzzers, 8h, bug-fix params (PLANNED)
+## distributed (CloudLab): dist3 — all 12 fuzzers, 8h, bug-fix params (RUNNING)
 
 Goal:
 Re-run dist2 with three code fixes and updated CD parameters that address the root causes found
 in dist2 analysis. Expected to fix honggfuzzcd (761→~5 resets) and fairfuzzcd (-2 bugs→0+).
 
-Code changes needed before launch:
-1. `honggfuzzcd/newsrc/honggfuzz.c:driftCycle()`: replace raw corpus count with
-   `peak_corpus = max(peak_corpus, corpus)` (monotone metric — eliminates false stagnation from
-   corpus minimization; also scales the stagnation threshold against peak not initial).
-2. No other code changes; parameter changes via `worker-run.sh` only.
+Code changes applied:
+1. `honggfuzzcd/newsrc/honggfuzz.c:driftCycle()`: two-part fix:
+   - **Peak-corpus metric**: pass `max(peak_corpus, corpus)` to drift_update instead of raw
+     `dynfileqCnt` (non-monotonic due to corpus minimization). Eliminates false stagnation signals.
+   - **Time-based gate**: call drift_check_value at most once per 60 seconds (replaces
+     `mutations % window_size == 0` which fired every 3ms at 2M exec/min).
+   - **Post-reset reset**: peak_corpus and initial_corpus_count reset to 0 after each corpus
+     reset so each epoch starts fresh.
+2. `cloudlab/worker-run.sh`: updated per-fuzzer CD parameters (COOLDOWN, CONSECUTIVE, WINDOW).
 
 Proposed parameters (see DECISIONS.md § dist3):
 
@@ -25,7 +29,8 @@ Proposed parameters (see DECISIONS.md § dist3):
 | moptaflcd      | 5    | 0.3  | 10       | Unchanged (working)         | +6 bugs in dist2 |
 | aflfastcd      | 3    | 0.5  | 10       | Unchanged (working)         | +5 bugs in dist2 |
 
-Status: PLANNED — not yet launched. Requires honggfuzz.c code change + worker-run.sh update.
+Status: RUNNING — launched 2026-06-18 ~16:15 CDT. Expected completion ~00:15 CDT June 19.
+Commit: 7043370d ("dist3: fix honggfuzz driftCycle (peak_corpus + time-gate) + update CD params")
 
 ---
 
