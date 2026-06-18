@@ -2,10 +2,10 @@
 
 ## Current Goal
 
-Evaluate CD-Fuzzing on the Magma benchmark. **`dist2` (8h, all 12 fuzzers × 2 reps × 9
-targets, winning params from dist1 A/B) was launched 2026-06-18 ~06:30 CDT and is currently
-running.** Expected finish ~14:30 CDT 2026-06-18.
-Monitor: `tail -f /proj/cdfuzzing-PG0/distributed/dist2_orch.log` or `tmux attach -t dist2`.
+Evaluate CD-Fuzzing on the Magma benchmark. **`dist2` is COMPLETE** (finished 2026-06-18 ~15:24 CDT).
+Next step: implement `peak_corpus` code fix in `honggfuzz.c` and update `worker-run.sh` with dist3
+parameters, then launch `dist3` (same cluster, same 8h/12 fuzzers/2 reps/9 targets).
+See DECISIONS.md § dist3 for full parameter table and code change spec.
 
 ## Current State
 
@@ -34,12 +34,17 @@ Monitor: `tail -f /proj/cdfuzzing-PG0/distributed/dist2_orch.log` or `tmux attac
   2. `honggfuzzcd` CD init race: `initial_corpus_count=0` → all 17512 drifts detected, 0 resets fired; fixed with lazy init in `honggfuzz.c:driftCycle()`
   3. `fairfuzzcd` blacklist trap: FairFuzz branch blacklist fills → fuzzer spins 21M queue cycles with 0 mutations; fixed with `-q 1` in run.sh + FairFuzz state reset in `perform_corpus_reset()`
 
-**Distributed CloudLab experiment — `dist2` RUNNING**
-- Launched 2026-06-18 ~06:30 CDT; 8h timeout; expected finish ~14:30 CDT 2026-06-18
-- tmux session `dist2` on head; log: `/proj/cdfuzzing-PG0/distributed/dist2_orch.log`
-- **Both reps use the same winning params** (genuine repetitions, not A/B)
-- Winning params: aflcd C=3/SF=0.5, aflpluspluscd C=8/SF=0.5, fairfuzzcd C=3/SF=0.5, moptaflcd C=5/SF=0.3, aflfastcd C=3/SF=0.5, honggfuzzcd C=5/SF=0.5
-- Results land at: `/proj/cdfuzzing-PG0/distributed/dist2/ar/<fuzzer>/<target>/<program>/<rep>/`
+**Distributed CloudLab experiment — `dist2` COMPLETE**
+- 24 workers, launched 2026-06-18 ~06:30 CDT, finished 2026-06-18 ~15:24 CDT
+- Results: `/proj/cdfuzzing-PG0/distributed/dist2/ar/` | Plots: `/proj/cdfuzzing-PG0/distributed/dist2/plots/` (58 files)
+- Results: moptaflcd +6 bugs, aflfastcd +5 bugs, aflpluspluscd ±0 (+1.6% cov), aflcd -1 (variance), fairfuzzcd -2, **honggfuzzcd -16 (761 resets — CASCADE LOOP)**
+- Root causes documented in DECISIONS.md § dist2 analysis
+
+**`dist3` — PLANNED (not yet launched)**
+- Code change: `honggfuzzcd/newsrc/honggfuzz.c:driftCycle()` → peak_corpus monotone metric
+- Param changes: fairfuzzcd C=3→15; aflcd COOLDOWN=10→25; aflpluspluscd COOLDOWN=10→25
+- Unchanged: moptaflcd C=5/SF=0.3, aflfastcd C=3/SF=0.5
+- See EXPERIMENTS.md § dist3 for full spec
 
 ## Important Files
 

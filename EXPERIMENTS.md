@@ -2,6 +2,33 @@
 
 ---
 
+## distributed (CloudLab): dist3 — all 12 fuzzers, 8h, bug-fix params (PLANNED)
+
+Goal:
+Re-run dist2 with three code fixes and updated CD parameters that address the root causes found
+in dist2 analysis. Expected to fix honggfuzzcd (761→~5 resets) and fairfuzzcd (-2 bugs→0+).
+
+Code changes needed before launch:
+1. `honggfuzzcd/newsrc/honggfuzz.c:driftCycle()`: replace raw corpus count with
+   `peak_corpus = max(peak_corpus, corpus)` (monotone metric — eliminates false stagnation from
+   corpus minimization; also scales the stagnation threshold against peak not initial).
+2. No other code changes; parameter changes via `worker-run.sh` only.
+
+Proposed parameters (see DECISIONS.md § dist3):
+
+| CD Fuzzer      | C    | SF   | COOLDOWN | Change from dist2           | Rationale                            |
+|---|---|---|---|---|---|
+| honggfuzzcd    | 5    | 0.5  | 10       | Code fix (peak_corpus)      | Metric fix makes existing params work |
+| fairfuzzcd     | 15   | 0.5  | 10       | C: 3→15                     | Rare-branch rebuild needs 15+ windows |
+| aflcd          | 5    | 0.5  | 25       | COOLDOWN: 10→25             | Prevent cascading multi-reset on same program |
+| aflpluspluscd  | 8    | 0.5  | 25       | COOLDOWN: 10→25             | Match aflcd improvement |
+| moptaflcd      | 5    | 0.3  | 10       | Unchanged (working)         | +6 bugs in dist2 |
+| aflfastcd      | 3    | 0.5  | 10       | Unchanged (working)         | +5 bugs in dist2 |
+
+Status: PLANNED — not yet launched. Requires honggfuzz.c code change + worker-run.sh update.
+
+---
+
 ## seed_4: Batch 1 — fairfuzz + aflplusplus (24h)
 
 Goal:
@@ -270,6 +297,40 @@ Output:
 - `/proj/cdfuzzing-PG0/distributed/dist2_orch.log`
 
 Status:
-RUNNING — dispatched 2026-06-18 06:30 CDT; expected finish ~14:30 CDT 2026-06-18.
-All 24 workers dispatched (0 skipped).
+COMPLETE — finished 2026-06-18 ~15:24 CDT. All 24 workers done. 58 analysis files in
+`/proj/cdfuzzing-PG0/distributed/dist2/plots/`.
+
+Results summary:
+| Pair | Δbugs | Δcov% | Resets | Verdict |
+|---|---|---|---|---|
+| moptafl → moptaflcd | **+6** | -0.4% | 33 | ✅ Best. libtiff TIF002, TIF008, poppler PDF008, sqlite3 SQL012/SQL020 all new. |
+| aflfast → aflfastcd | **+5** | -0.5% | 5 | ✅ Good. libxml2 XML009, server SSL020, sqlite3 SQL018 new. |
+| aflplusplus → aflpluspluscd | +0 | +1.6% | 14 | ≈ Neutral. |
+| afl → aflcd | -1 | -2.8% | 8 | ⚠ Slight regression; sqlite3 miss likely variance (0 resets on sqlite3). |
+| fairfuzz → fairfuzzcd | -2 | -8.1% | 3 | ❌ Still negative. libpng: 1 reset → coverage 1072→44 (-95.9%). php/exif: 3→1 bugs. |
+| honggfuzz → honggfuzzcd | **-16** | **-62.6%** | **761** | ❌ Catastrophic. 7036 drifts, 36 resets/24h/program, cascade loop. |
+
+Root-cause analysis (see DECISIONS.md §dist2 analysis):
+1. honggfuzzcd (CRITICAL): WINDOW=100 is 3ms at 2M exec/min. THRESHOLD=0.05 requires 300 new edges
+   per 3ms window (never met at steady state). Every window is a stagnation event → resets fire every
+   ~15ms → 7036 drifts, 761 resets. Additional: output/ file count is non-monotonic (corpus
+   minimization shrinks it), making every minimization cycle look like stagnation.
+   Fix: (a) use peak-ever corpus count (monotone metric) in driftCycle(); (b) scale WINDOW by exec rate.
+2. fairfuzzcd (ONGOING): Corpus reset destroys FairFuzz's rare-branch memory. After resetting to 5 seeds,
+   FairFuzz can't re-cover the rare branches it took hours to find. Single reset on libpng wiped
+   1000 queue entries, fuzzer recovered only 44. php/exif lost PHP009+PHP004 triggers.
+   Fix: CONSECUTIVE=15 (very rare resets) to avoid destructive reset during productive phases.
+3. aflcd (MILD): php/json=3 resets, php/unserialize=3 resets. COOLDOWN=10 insufficient to prevent
+   cascade. Each reset removes queue progress, fuzzer rebuilds to same plateau, fires again.
+   Fix: COOLDOWN=25.
+4. aflpluspluscd (NEUTRAL): 268 drifts but 94.8% guard-filtered → 14 resets. AFL++'s internal adaptive
+   mechanisms (cmp coverage, laf-intel) already handle local optima; CD resets give marginal benefit.
+
+Why the winners win:
+- moptaflcd: MOpt PSO converges to local mutation-operator optima. Resets force PSO to restart from
+  fresh seeds, exploring different operator combinations. 33 resets spread across 16/21 programs
+  (sweet spot: 1-5 resets each), each firing after genuine stagnation.
+- aflfastcd: AFLFast's power schedule converges to narrow high-priority paths. 5 well-placed resets
+  break power-schedule bias, redistributing execution across paths. Very low reset rate means
+  each reset is high-signal.
 

@@ -1,5 +1,156 @@
 # Decisions
 
+## 2026-06-18: dist3 proposed CD parameters
+
+Following the dist2 root-cause analysis, proposed parameter changes for dist3:
+
+| CD Fuzzer      | C (dist2) | C (dist3) | SF   | COOLDOWN (dist2) | COOLDOWN (dist3) | Code change? |
+|---|---|---|---|---|---|---|
+| honggfuzzcd    | 5         | 5         | 0.5  | 10               | 10               | **YES** (peak_corpus metric) |
+| fairfuzzcd     | 3         | **15**    | 0.5  | 10               | 10               | No |
+| aflcd          | 5         | 5         | 0.5  | 10               | **25**           | No |
+| aflpluspluscd  | 8         | 8         | 0.5  | 10               | **25**           | No |
+| moptaflcd      | 5         | 5         | 0.3  | 10               | 10               | No |
+| aflfastcd      | 3         | 3         | 0.5  | 10               | 10               | No |
+
+**honggfuzzcd code fix (honggfuzz.c):**
+Replace raw corpus count with monotone peak metric in `driftCycle()`:
+```c
+// Before: uses corpus (current output/ file count, non-monotonic)
+// After:
+static size_t peak_corpus = 0;
+if (corpus > peak_corpus) peak_corpus = corpus;
+// Then use peak_corpus in place of corpus for the stagnation threshold comparison
+```
+This makes the coverage signal monotonically non-decreasing, exactly like AFL's `queued_paths`.
+corpus minimization (which shrinks output/) no longer registers as stagnation.
+
+**fairfuzzcd C=3→15:**
+Each "window" for fairfuzz is ~1 minute of real time. With C=3, a reset fires after 3 minutes
+of stagnation, which is too early — FairFuzz's rare-branch re-discovery after a reset takes
+10-30 minutes. C=15 requires 15 consecutive stagnant windows (~15 minutes), ensuring resets
+only fire after genuine long-term plateau. Expected outcome: 0-1 resets per campaign vs 3 in dist2.
+
+**COOLDOWN 10→25 for afl/aflplusplus:**
+With COOLDOWN=10 and C=3-5, programs like php/json and php/unserialize accumulated 3 resets
+each. After each reset the fuzzer rebuilds to the same plateau and fires again 10 windows later.
+COOLDOWN=25 spaces resets by 25 windows (~25 minutes), giving each reset time to produce
+genuine new coverage before the next stagnation check activates.
+
+Consequences:
+- These parameters are educated guesses based on 2 experiments; statistical confidence requires
+  3+ repetitions per config.
+- The honggfuzzcd code change may reveal new issues (e.g., if the stagnation threshold now fires
+  too rarely — if peak_corpus never truly stagnates, 0 resets will fire, similar to seed_4 fairfuzz).
+  Add a sanity check: log when peak_corpus changes vs when it stays flat.
+- If dist3 honggfuzzcd still shows 0 resets, need to lower SF or C for honggfuzz specifically.
+
+---
+
+## 2026-06-18: dist2 results analysis — root causes of good and bad outcomes
+
+### honggfuzzcd: CASCADE LOOP — 761 resets, -16 bugs, -62.6% cov
+
+**Primary root cause: Non-monotonic coverage metric (corpus minimization)**
+honggfuzz continuously minimizes its corpus: old inputs are replaced by shorter/more-efficient
+ones, causing output/ file count to shrink during minimization bursts. The CD module uses
+`queued_paths` = output/ file count as the coverage signal. Unlike AFL's `queued_paths` (strictly
+non-decreasing), honggfuzz's count fluctuates (log evidence: 305→265→273→269→254 in first 5
+minutes of xmllint run). The EMA-based stagnation detector cannot distinguish minimization-caused
+shrinkage from genuine stagnation.
+
+**Secondary cause: Window/threshold mismatch with honggfuzz's execution rate**
+honggfuzz runs at ~2M exec/min (log: 2,050,044 iterations in first minute). At WINDOW=100
+iterations, each measurement window is ~3ms. Real coverage growth over a 3ms window is <<5%.
+The 5% threshold (THRESHOLD=0.05) is calibrated for AFL queue cycles (~minutes each), not
+honggfuzz iteration batches (~milliseconds). Result: nearly every window registers as stagnation.
+
+**Evidence:**
+- 7036 drifts across 21 programs (335/program avg) vs 1129 for moptaflcd (54/program)
+- resets_per_24h = 36.24 (moptaflcd = 1.57; aflfastcd = 0.24)
+- 14/21 programs had 6+ resets; only 3 had 0 resets
+- xmllint drift log: consecutive_drifts=0 at every minute-log entry (resets fired and cleared counter
+  within each 1-minute reporting window)
+- Final output/ file count: honggfuzz 1918 files / honggfuzzcd 956 files for libpng (reset
+  happened close to end of campaign, dumping accumulated corpus)
+
+**Conclusion:** The CD module is fundamentally mis-calibrated for honggfuzz. corpus resets
+destroyed all accumulated coverage: baseline honggfuzz = 130,014 total coverage units,
+honggfuzzcd = 48,686 (62.6% loss).
+
+---
+
+### fairfuzzcd: DESTRUCTIVE RESET — -2 bugs, -8.1% cov, 3 resets
+
+**Root cause: FairFuzz rare-branch state cannot survive corpus reset**
+FairFuzz builds up `hit_bits[]` (per-branch hit counts) and `blacklist[]` (unreachable branches)
+over hours of fuzzing. These guide its rare-branch targeting — the core of FairFuzz's value.
+After a corpus reset to original seeds, the `hit_bits` and blacklist were cleared (our fix from
+dist2), but the SEEDS don't cover the rare branches that FairFuzz had identified. FairFuzz needs
+10-30 minutes to re-discover which branches are rare and begin effective targeting again.
+
+**Evidence:**
+- libpng/libpng_read_fuzzer: 1 reset → coverage 1072 → 44 (-95.9%). The single reset erased
+  all queue progress; fairfuzzcd recovered only 44/1072 paths in the remaining 7h.
+- php/exif: fairfuzz triggers PHP009+PHP004+PHP011 (3 bugs); fairfuzzcd triggers only PHP011
+  (1 bug) — the two rarer bugs lost after rare-branch state disruption.
+- Total -2 bugs despite the -q 1 bootstrap fix making blacklist-trap much less likely.
+
+**Conclusion:** With C=3, a reset fires after just 3 minutes of stagnation, far too early for
+FairFuzz's recovery time. The rare-branch re-discovery overhead means short resets are net-negative.
+The `-q 1` fix solved the blacklist-trap but didn't solve the fundamental state-recovery problem.
+
+---
+
+### aflcd: CASCADING RESETS — -1 bug, -2.8% cov, 8 resets
+
+**Root cause: COOLDOWN=10 insufficient to prevent multi-reset cascade on same program**
+php/json: 3 resets; php/unserialize: 3 resets; libpng: 2 resets. Pattern: reset fires,
+COOLDOWN=10 windows expire, fuzzer reaches same plateau as before, another reset fires.
+This is expected behavior but suboptimal: AFL needs 10-20 minutes per reset to re-build
+useful coverage; COOLDOWN=10 windows is too short to determine whether a reset helped.
+
+**Evidence:**
+- 3 programs with 3+ resets (php/json: 3, php/unserialize: 3, libpng: 2) out of 21
+- The -1 bug (sqlite3: afl triggers SQL002, aflcd triggers 0 bugs) is likely variance —
+  aflcd had 0 resets on sqlite3, so resets are not the cause; single-rep variance is.
+
+**Conclusion:** Mild parameter issue. COOLDOWN=25 should reduce cascade frequency.
+
+---
+
+### What makes moptaflcd and aflfastcd work
+
+**moptaflcd (+6 bugs, 33 resets, C=5/SF=0.3):**
+MOpt-AFL uses Particle Swarm Optimization to select mutation operators. The PSO converges to
+a local optimum where a subset of operators dominate — effective for current seeds but missing
+code regions reachable only via different mutation strategies. A corpus reset forces PSO to
+restart from diverse seeds, effectively re-exploring the operator selection space.
+- SF=0.3: corpus only needs 30% growth before reset is considered (lower bar). moptafl's PSO
+  finds paths quickly, so genuine stagnation sets in at 30% growth just as effectively as 50%.
+- C=5: 5 windows of stagnation needed → well-calibrated for moptafl's fast initial exploration.
+- 33 resets spread across 16/21 programs (5 with 0, 11 with 1-2, 5 with 3-5): no cascade.
+- New bugs found: TIF002, TIF008 (libtiff), PDF008 (poppler/pdfimages), SQL012+SQL020 (sqlite3)
+  — these are unique bugs not in the moptafl baseline.
+
+**aflfastcd (+5 bugs, 5 resets, C=3/SF=0.5):**
+AFLFast's exponential power schedule can over-prioritize a narrow set of low-fuzz-count paths,
+neglecting harder-to-reach code. 5 well-placed resets (each on a different program) reset the
+power schedule, allowing the exponential distribution to re-explore from a different starting point.
+Very low reset rate (5 total in 8h across 21 programs) means each reset is high-signal and the
+fuzzer spends >99% of time fuzzing, not recovering.
+- New bugs found: XML009 (libxml2), SSL020 (openssl/server), SQL018 (sqlite3) — all from resets
+  that fired on programs where AFLFast's schedule was genuinely stuck.
+
+---
+
+## 2026-06-18: dist2 winning parameters (carried to dist3 unchanged)
+
+moptaflcd C=5/SF=0.3 and aflfastcd C=3/SF=0.5 produced strong results in dist2.
+These are carried forward unchanged to dist3. See dist3 parameter table above.
+
+---
+
 ## 2026-06-17: Exclude aflfast pair from main results table
 
 Decision:

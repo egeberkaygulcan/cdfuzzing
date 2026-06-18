@@ -2,28 +2,40 @@
 
 ## High Priority
 
-- [ ] **Monitor dist2** — expected finish ~14:30 CDT 2026-06-18. Check:
-  `tail -f /proj/cdfuzzing-PG0/distributed/dist2_orch.log`
-  or `tmux attach -t dist2` on head. Extend CloudLab lease if needed before campaign ends.
-- [ ] **Review dist2 analysis output** at `/proj/cdfuzzing-PG0/distributed/dist2/plots/`.
-  Run analysis manually when complete:
-  `CDFUZZ_BASE=/proj/cdfuzzing-PG0/distributed/dist2 CDFUZZ_OUTDIR=.../dist2/plots python3 /local/repository/plot_seed4.py`
-- [ ] **Push commits to GitHub** — 4 local commits not yet pushed (SSH key not trusted on head).
-  Commits: b97ea801 (dist1 complete + infra fixes), 0a60bf3c (FairFuzz blacklist trap fix),
-  95b34cc0 (DECISIONS.md), 03cc0915 (worker-run.sh dist2 params).
-  Option: `scp` the git bundle to a machine that has GitHub SSH access, then push.
-- [ ] **Interpret dist2 results**: both reps same params → compute per-fuzzer mean Δbugs/Δcov%
-  and run Mann-Whitney U tests CD vs baseline. Key questions:
-  - Did honggfuzzcd resets fire correctly now (lazy init fix)? Check reset_report for dist2.
-  - Did fairfuzzcd recover (blacklist trap fix + -q 1)? Check bug counts on libpng/libtiff/php.
-  - Do winning params generalize? Compare dist2 vs dist1 rep-0 winning side.
+- [ ] **Implement `peak_corpus` fix in honggfuzz.c** before dist3:
+  In `magma/fuzzers/honggfuzzcd/newsrc/honggfuzz.c` `driftCycle()`, replace:
+  ```c
+  // use raw corpus count
+  ```
+  with:
+  ```c
+  static size_t peak_corpus = 0;
+  if (corpus > peak_corpus) peak_corpus = corpus;
+  // use peak_corpus instead of corpus for stagnation threshold comparison
+  ```
+  Then re-deploy to all 24 workers via scp.
+- [ ] **Update worker-run.sh for dist3 parameters**:
+  - fairfuzzcd: C=3 → **C=15**
+  - aflcd, aflpluspluscd: COOLDOWN=10 → **COOLDOWN=25** (add new env var `CD_COOLDOWN`)
+  - moptaflcd, aflfastcd: unchanged
+  Deploy to all 24 workers via scp.
+- [ ] **Launch dist3** in tmux: `./orchestrate.sh --run-id dist3 --timeout 8h`
+- [ ] **Push commits to GitHub** — 5 local commits not yet pushed (SSH key not trusted on head).
+  Commits: b97ea801, 0a60bf3c, 95b34cc0, 03cc0915, 6d7bc0f6 (MD updates).
+  Option: `git bundle create /tmp/cdfuzzing.bundle HEAD`, scp to local machine, then push.
 
 ## Medium Priority
 
-- [ ] Investigate fairfuzz libtiff programs (both fuzzer+fuzzercd produced no `fuzzer_stats` in batch 1 on the previous node — root cause unknown)
-- [ ] Replace `queued_paths` coverage metric with bitmap edge count (requires parsing `fuzzer_stats` bitmap_cvg field or using `afl-showmap` on queue)
-- [ ] Add plot: reset timing distribution per fuzzer (when in 24h campaign do resets occur?)
-- [ ] Export plots for paper: `scp -r eldarfin@head...:~/cdfuzzing/plots_seed4/ ~/paper/figures/`
+- [ ] Re-run dist2 analysis to confirm honggfuzz coverage metric (output/ file count vs edge count):
+  the -62.6% coverage loss in honggfuzzcd may be partly an artifact of the get_final_cov()
+  fallback counting output/ files at end-of-run (near-empty after last reset). Consider adding
+  per-minute peak coverage tracking to plot_seed4.py for honggfuzz.
+- [ ] Investigate fairfuzz libtiff programs (both fuzzer+fuzzercd produced no `fuzzer_stats`
+  in batch 1 on the previous node — root cause unknown)
+- [ ] Replace `queued_paths` coverage metric with bitmap edge count (requires parsing
+  `fuzzer_stats` bitmap_cvg field or using `afl-showmap` on queue)
+- [ ] Export plots for paper: `scp -r eldarfin@head...:cdfuzzing-pg0/dist2/plots/ ~/paper/figures/`
+- [ ] Extend CloudLab lease before it expires (check deadline: `cloudlab.us → experiments → eldarfin-308618`)
 
 ## Low Priority
 
@@ -60,3 +72,6 @@
 - [x] Select dist2 winning params from dist1 A/B analysis; update worker-run.sh — 2026-06-18
 - [x] Deploy 5 fixed files to all 24 workers via scp — 2026-06-18
 - [x] Launch dist2 in tmux (8h, all 12 fuzzers × 2 reps, winning params) — 2026-06-18 ~06:30 CDT
+- [x] dist2 COMPLETE: all 24 workers done, results at /proj/cdfuzzing-PG0/distributed/dist2/ — 2026-06-18 ~15:24 CDT
+- [x] Deep-dive dist2 analysis: honggfuzzcd root cause (cascade loop / non-monotonic metric), fairfuzzcd root cause (rare-branch state recovery), moptaflcd/aflfastcd win analysis — 2026-06-18
+- [x] Update EXPERIMENTS.md, DECISIONS.md, HANDOFF.md, TODO.md with dist2 results and dist3 plan — 2026-06-18
