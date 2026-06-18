@@ -67,21 +67,27 @@ mkdir -p "$LOCALWORK" "$STATUS_DIR" "$SHARED_RUN/log"
 rm -f "$STATUS_DIR/${NODE_TAG}.done" "$STATUS_DIR/${NODE_TAG}.failed"
 echo "$(date '+%F %T') started on $(hostname)" > "$STATUS_DIR/${NODE_TAG}.running"
 
-# --- Per-fuzzer CD parameter selection (winning params from dist1 A/B) ----
-# Both reps use the same winning config — these are genuine repetitions.
+# --- Per-fuzzer CD parameter selection (dist3: bug-fix params) ----
+# honggfuzz: code-fixed (peak_corpus + time-gate in honggfuzz.c); WINDOW=5 means
+#            5 time-gated samples (each ~60s) per KS window = 5-min comparison.
+# fairfuzz:  C=15 (rare-branch rebuild takes 10-30 min; C=3 was too destructive).
+# afl/afl++: COOLDOWN=25 (prevent 3+ resets on same program within one campaign).
+# moptafl/aflfast: unchanged (working well in dist2).
 CD_CONSECUTIVE=5
 CD_STAGNATION=0.5
+CD_COOLDOWN=10
+CD_WINDOW=100
 if [[ "$FUZZER" == *cd ]]; then
     case "$FUZZER" in
-        aflcd)         CD_CONSECUTIVE=3; CD_STAGNATION=0.5 ;;
-        aflpluspluscd) CD_CONSECUTIVE=8; CD_STAGNATION=0.5 ;;
-        fairfuzzcd)    CD_CONSECUTIVE=3; CD_STAGNATION=0.5 ;;
-        moptaflcd)     CD_CONSECUTIVE=5; CD_STAGNATION=0.3 ;;
-        aflfastcd)     CD_CONSECUTIVE=3; CD_STAGNATION=0.5 ;;
-        honggfuzzcd)   CD_CONSECUTIVE=5; CD_STAGNATION=0.5 ;;
+        aflcd)         CD_CONSECUTIVE=5; CD_STAGNATION=0.5; CD_COOLDOWN=25 ;;
+        aflpluspluscd) CD_CONSECUTIVE=8; CD_STAGNATION=0.5; CD_COOLDOWN=25 ;;
+        fairfuzzcd)    CD_CONSECUTIVE=15; CD_STAGNATION=0.5 ;;
+        moptaflcd)     CD_CONSECUTIVE=5;  CD_STAGNATION=0.3 ;;
+        aflfastcd)     CD_CONSECUTIVE=3;  CD_STAGNATION=0.5 ;;
+        honggfuzzcd)   CD_CONSECUTIVE=5;  CD_STAGNATION=0.5; CD_WINDOW=5 ;;
     esac
 fi
-log "CD params: CONSECUTIVE=$CD_CONSECUTIVE STAGNATION_FACTOR=$CD_STAGNATION"
+log "CD params: CONSECUTIVE=$CD_CONSECUTIVE STAGNATION=$CD_STAGNATION COOLDOWN=$CD_COOLDOWN WINDOW=$CD_WINDOW"
 
 # --- Generate a single-fuzzer captainrc -----------------------------------
 CAPTAINRC="$LOCALWORK/captainrc_${NODE_TAG}"
@@ -98,13 +104,13 @@ CAPTAINRC="$LOCALWORK/captainrc_${NODE_TAG}"
     echo "${FUZZER}_TARGETS=($TARGETS)"
     echo ""
     echo "# CD drift parameters (no effect on baseline fuzzers)"
-    echo "export AFL_DRIFT_WINDOW=100"
+    echo "export AFL_DRIFT_WINDOW=$CD_WINDOW"
     echo "export AFL_DRIFT_THRESHOLD=0.05"
     echo "export AFL_DRIFT_SOFT_RESET=2"
     echo "export AFL_DRIFT_MAX_RESETS=0"
     echo "export AFL_DRIFT_HAVOC_BOOST=2"
     echo "export AFL_DRIFT_BOOST_CYCLES=1"
-    echo "export AFL_DRIFT_COOLDOWN=10"
+    echo "export AFL_DRIFT_COOLDOWN=$CD_COOLDOWN"
     echo "export AFL_DRIFT_CONSECUTIVE=$CD_CONSECUTIVE"
     echo "export AFL_DRIFT_EMA_ALPHA=0.1"
     echo "export AFL_DRIFT_STAGNATION_FACTOR=$CD_STAGNATION"
