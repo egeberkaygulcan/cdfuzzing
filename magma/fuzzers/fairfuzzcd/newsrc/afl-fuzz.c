@@ -1256,8 +1256,22 @@ static void perform_corpus_reset(void) {
   while (q) {
     q->tc_ref = 0;
     q->fs_redundant = 0;
+    /* Reset FairFuzz per-entry state so surviving seeds get re-fuzzed from
+     * scratch after a corpus reset. Without this, fuzz_one() immediately skips
+     * them because fuzzed_branches already covers their target branches. */
+    q->was_fuzzed = 0;
+    memset(q->fuzzed_branches, 0, MAP_SIZE >> 3);
     q = q->next;
   }
+
+  /* Reset FairFuzz global branch-tracking state. hit_bits[] retains counts from
+   * now-deleted corpus entries, making their branches look "common" and causing
+   * the blacklist to grow until all inputs are skipped. Clear it so fresh branch
+   * discovery starts from scratch on the reduced corpus. */
+  memset(hit_bits, 0, sizeof(hit_bits));
+  blacklist[0] = -1;
+  blacklist_pos = 0;
+  rare_branch_exp = 4;
 
   score_changed = 1;
 
