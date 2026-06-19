@@ -2,7 +2,39 @@
 
 ---
 
-## distributed (CloudLab): dist5 — all 12 fuzzers, 8h, honggfuzz monitoring-only (PLANNED)
+## distributed (CloudLab): dist6 — 8 fuzzers × 3 reps, 8h, honggfuzz UaF fix + rep2 param sweep (PLANNED)
+
+Goal:
+Three changes from dist5:
+1. **honggfuzzcd UaF fix**: corpus reset re-enabled with zombie approach — removed entries
+   keep `entry->size=0` but are not freed; worker threads reading stale pointers get size=0
+   and copy 0 bytes safely. This eliminates the dist4 crash without invasive refactoring.
+2. **Manifest redesign**: drop moptafl/aflfast/moptaflcd/aflfastcd (4 fuzzers × 2 reps = 8 nodes);
+   redistribute to 3rd rep for remaining 8 fuzzers. Result: 8 fuzzers × 3 reps = 24 nodes.
+3. **Rep 2 param sweep** for CD variants: test `AFL_DRIFT_SOFT_RESET=1` (det+havoc mode, allowing
+   favored entries to re-run deterministic stages post-reset) vs current `=2` (havoc-only).
+   Hypothesis: SOFT_RESET=2 blocked deterministic mutation stages after reset, causing negative Δ.
+
+| Fuzzer | Rep 0 & 1 | Rep 2 (sweep) |
+|---|---|---|
+| aflcd | SOFT_RESET=2, BOOST=2 | SOFT_RESET=1, BOOST=1 |
+| aflpluspluscd | SOFT_RESET=2, BOOST=2, C=8 | SOFT_RESET=1, BOOST=1, C=6 |
+| fairfuzzcd | SOFT_RESET=2, BOOST=2, C=15 | SOFT_RESET=1, BOOST=1 |
+| honggfuzzcd | WINDOW=5, CONSEC=5, reset=ON | WINDOW=3, CONSEC=3, reset=ON |
+| baselines | unchanged | pure replication |
+
+Code changes (commit a0d951f8):
+- `drift-detect.c`: zombie approach in `drift_perform_corpus_reset()` — no `free(entry)`
+- `honggfuzz.c`: remove `reset_on_drift=false` override; log shows `reset=ON` dynamically
+- `worker-run.sh`: add rep2 override block with SOFT_RESET/HAVOC_BOOST variables
+- `cluster/manifest.txt` (NFS, not in repo): 8 fuzzers × 3 reps = 24 workers
+
+Status: PLANNED — auto-queued in `tmux:dist6_wait`; will launch when dist5 finishes (~21:25 CDT).
+See DECISIONS.md § dist6 for root cause analysis and rationale.
+
+---
+
+## distributed (CloudLab): dist5 — all 12 fuzzers, 8h, honggfuzz monitoring-only (IN PROGRESS)
 
 Goal:
 Fix the dist4 use-after-free crash in honggfuzzcd. The selective reset freed dynfile_t entries
@@ -13,7 +45,7 @@ reset for honggfuzzcd entirely (monitoring-only). Hypothesis: 0 resets => 0 cove
 Code change (single line in honggfuzz.c):
 Set `drift_det->reset_on_drift = false` after init. No parameter changes from dist4.
 
-Status: PLANNED — requires file deployment to workers.
+Status: IN PROGRESS — launched 2026-06-19 12:39 CDT, 24 workers, expected completion ~21:25 CDT.
 See DECISIONS.md § dist5 for root cause analysis and rationale.
 
 ---

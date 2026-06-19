@@ -2,15 +2,19 @@
 
 ## High Priority
 
-- [ ] **Deploy dist5 code change to workers and launch dist5**:
-  Only one file changed: `honggfuzzcd/newsrc/honggfuzz.c` (commit ac9eec7f).
-  `for i in $(seq 10 33); do scp -i /proj/cdfuzzing-PG0/cluster/ssh/id_rsa magma/fuzzers/honggfuzzcd/newsrc/honggfuzz.c eldarfin@192.168.1.$i:/local/repository/magma/fuzzers/honggfuzzcd/newsrc/honggfuzz.c & done; wait`
-  Then: `cd cloudlab && tmux new -d -s dist5 './orchestrate.sh --run-id dist5 --timeout 8h'`
-- [ ] **Investigate fairfuzzcd `AFL_DRIFT_SOFT_RESET=2`**: check if this env var disables
-  deterministic stages (bitflip/arith) in AFL even without a reset firing. If so,
-  disable it for fairfuzzcd or set `AFL_DRIFT_SOFT_RESET=0`.
-- [ ] **Push commits to GitHub** — 7+ local commits not yet pushed.
+- [x] **dist5 deployed and launched** (2026-06-19 12:39 CDT, `tmux:dist5`)
+- [x] **dist6 prepared and queued**: honggfuzz UaF fix (zombie approach), 8×3 manifest,
+  rep2 SOFT_RESET=1 sweep — commit a0d951f8; auto-launches via `tmux:dist6_wait`
+- [ ] **Analyze dist5 results** when done (~21:25 CDT): check honggfuzzcd Δ ≈ 0 (monitoring-only baseline)
+- [ ] **Analyze dist6 results** when done (~next day): key questions:
+  - honggfuzzcd: does reset fire without crash? Does Δ improve from ~0?
+  - fairfuzzcd rep2 (SOFT_RESET=1): does Δ improve from -6?
+  - aflcd/aflpluspluscd rep2: do det stages post-reset help?
+- [ ] **Push commits to GitHub** — 8+ local commits unpushed (a6b53bb5..a0d951f8).
   `git bundle create /tmp/cdfuzzing.bundle HEAD`, scp to local, push.
+- [ ] **Investigate fairfuzzcd `AFL_DRIFT_SOFT_RESET=2`** ✅ (RESOLVED): confirmed SOFT_RESET
+  only fires post-reset (not global). Root cause is likely mode 2 blocking det re-run of
+  rare-branch mutations. rep2 test with SOFT_RESET=1 will confirm in dist6.
 
 ## Medium Priority
 

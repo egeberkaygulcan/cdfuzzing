@@ -1,5 +1,72 @@
 # Decisions
 
+## 2026-06-19: dist6 proposed changes — honggfuzz UaF fix + rep2 param sweep
+
+### honggfuzzcd: proper UaF fix (zombie approach)
+
+**Problem**: dist5 disabled corpus reset entirely (monitoring-only) as a workaround. This means
+honggfuzzcd ≈ honggfuzz (Δ ≈ 0), wasting the 3rd rep. We want to actually fix the UaF and
+re-enable the reset so honggfuzzcd can benefit from drift-triggered corpus refresh.
+
+**Root cause revisited**: The crash site was `input_setSize():51 Too large size`. Tracing the
+call stack in `input.c`:
+```c
+// input_prepareDynamicInput():
+for (;;) {
+    MX_SCOPED_RWLOCK_WRITE(&run->global->mutex.dynfileq);
+    run->current = run->global->io.dynfileqCurrent;
+    ...
+    break;
+}  // ← lock released HERE by 'defer' cleanup attribute
+
+input_setSize(run, run->current->size);     // ← UaF: entry may be freed
+memcpy(run->dynfile->data, run->current->data, run->current->size);  // ← UaF
+```
+Worker threads store `run->current` (a raw `dynfile_t*`) outside the lock scope. When the
+main thread's `drift_perform_corpus_reset()` frees entries under the write lock, worker
+threads that already hold the pointer dereference freed memory.
+
+**Fix**: Zombie approach in `drift_perform_corpus_reset()` — never free entries.
+Instead: `TAILQ_REMOVE` (removes from active corpus) + `entry->size = 0` (marks as expired).
+- Worker threads that hold a stale pointer see `size=0` → `input_setSize(run, 0)` → safe
+- `memcpy(..., entry->data, 0)` copies 0 bytes → safe (data pointer still valid)
+- Memory leak: each removed entry ≈ few KB; 1–5 resets per campaign → negligible
+
+**Why not fix input.c instead?** Moving the `input_setSize`/`memcpy` block inside the
+lock scope would require restructuring the `for(;;)` break paths (3 exit points, one reuses
+the previous `run->current`). The zombie approach is a 3-line change vs a complex refactor.
+
+**Code change**: `drift-detect.c` in `drift_perform_corpus_reset()`, commit a0d951f8.
+**Re-enable**: Remove `drift_det->reset_on_drift = false` override from `honggfuzz.c`.
+
+### Manifest redesign: 8 fuzzers × 3 reps
+
+**Rationale**: moptafl and aflfast/aflfastcd show the clearest single-run variance (+6/+5/-3
+for moptaflcd, +5/+5/+1 for aflfastcd from a stable 27). More reps for the remaining 8
+fuzzers give better statistical confidence. The 3rd rep also serves as a parameter sweep.
+
+**Rep 2 AFL SOFT_RESET sweep**:
+
+`AFL_DRIFT_SOFT_RESET` is NOT a global setting — it only affects behavior when drift fires.
+Mode 2 (current) = havoc-only after reset: `passed_det` stays `1` on most entries → no
+re-run of deterministic stages. Mode 1 = det+havoc: clears `passed_det` on favored entries
+→ they re-run bit-flips/arithmetic/havoc with post-reset coverage knowledge.
+
+For FairFuzz specifically: mode 2 prevents re-running rare-branch-guided deterministic
+mutations after reset (FairFuzz's core advantage). Mode 1 should allow the rare-branch
+targeting to fire again.
+
+Hypothesis: switching to SOFT_RESET=1 will make aflcd/aflpluspluscd/fairfuzzcd Δ positive.
+
+| Fuzzer | Rep 0&1 config | Rep 2 sweep | Hypothesis |
+|---|---|---|---|
+| aflcd | SOFT_RESET=2, BOOST=2 | SOFT_RESET=1, BOOST=1 | Det re-run post-reset → better coverage recovery |
+| aflpluspluscd | SOFT_RESET=2, C=8 | SOFT_RESET=1, C=6 | Faster drift response + det stages |
+| fairfuzzcd | SOFT_RESET=2 | SOFT_RESET=1, BOOST=1 | Re-run rare-branch det mutations post-reset |
+| honggfuzzcd | WINDOW=5, CONSEC=5 | WINDOW=3, CONSEC=3 | Tighter monitoring sensitivity |
+
+---
+
 ## 2026-06-19: dist5 proposed change — honggfuzzcd monitoring-only (no reset)
 
 **Problem**: dist4 selective reset crashed with use-after-free in every program that had a reset.

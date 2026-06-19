@@ -2,10 +2,14 @@
 
 ## Current Goal
 
-Evaluate CD-Fuzzing on the Magma benchmark. **`dist3` is COMPLETE** (finished 2026-06-19 ~01:07 CDT).
-Next step: implement `selective_reset` code fix in `honggfuzz.c` (keep seeds + 30 recent entries
-rather than reverting to seeds-only), then launch `dist4`.
-See DECISIONS.md § dist4 for full code spec and rationale.
+Evaluate CD-Fuzzing on the Magma benchmark. **`dist5` is IN PROGRESS** (launched 2026-06-19 12:39 CDT,
+expected completion ~21:25 CDT). **`dist6` is queued** (auto-launches when dist5 finishes via `tmux:dist6_wait`).
+
+dist6 introduces:
+1. honggfuzzcd UaF fix (zombie approach — see DECISIONS.md § dist6)
+2. 8 fuzzers × 3 reps = 24 workers (dropped moptafl/aflfast)
+3. Rep 2 parameter sweep: SOFT_RESET=1 for AFL-based CD fuzzers
+See EXPERIMENTS.md § dist6 for full spec.
 
 ## Current State
 
@@ -46,10 +50,16 @@ See DECISIONS.md § dist4 for full code spec and rationale.
 - Results: moptaflcd -3, aflfastcd +1 (baseline variance), aflpluspluscd +2, aflcd 0, fairfuzzcd -6, **honggfuzzcd crashed (UaF in selective reset)**
 - Root causes documented in DECISIONS.md § dist4 analysis
 
-**`dist5` — PLANNED (honggfuzzcd monitoring-only)**
+**`dist5` — IN PROGRESS (honggfuzzcd monitoring-only)**
 - Code change: `honggfuzzcd/newsrc/honggfuzz.c` → `drift_det->reset_on_drift = false` (commit ac9eec7f)
-- No parameter changes from dist4
+- Launched 2026-06-19 12:39 CDT, 24 workers, expected ~21:25 CDT
 - See DECISIONS.md § dist5 and EXPERIMENTS.md § dist5 for full spec
+
+**`dist6` — QUEUED (honggfuzz UaF fix, 3 reps, rep2 param sweep)**
+- auto-launches from `tmux:dist6_wait` on head node when dist5 finishes
+- Code changes: `drift-detect.c` zombie fix, `honggfuzz.c` re-enable reset, `worker-run.sh` rep2 sweep (commit a0d951f8)
+- Manifest: drop moptafl/aflfast/moptaflcd/aflfastcd; 8 fuzzers × 3 reps = 24 workers
+- See DECISIONS.md § dist6 and EXPERIMENTS.md § dist6 for full spec
 
 ## Important Files
 
