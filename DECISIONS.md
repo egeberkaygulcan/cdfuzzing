@@ -1,5 +1,72 @@
 # Decisions
 
+## 2026-06-19: dist5 proposed change — honggfuzzcd monitoring-only (no reset)
+
+**Problem**: dist4 selective reset crashed with use-after-free in every program that had a reset.
+
+**Root cause**: `drift_perform_corpus_reset()` frees dynfile_t entries while worker threads
+hold raw pointers to those entries outside the dynfileq lock scope. honggfuzz's input model:
+1. Worker thread acquires read lock, picks `df = dynfileqCurrent`, advances pointer, releases lock.
+2. Worker thread USES `df->data` and `df->size` OUTSIDE the lock.
+3. Main thread acquires write lock in reset, removes + frees entries including the in-use `df`.
+4. Worker thread reads freed `df->size` → garbage → `input_setSize(): Too large size`.
+
+This is unfixable without either (a) adding reference counting to dynfile_t (invasive change to
+honggfuzz core), or (b) using deferred free (complex). The write lock does NOT protect threads
+that already hold raw pointers.
+
+**Fix for dist5**: Set `drift_det->reset_on_drift = false` after initialization in honggfuzz.c.
+Corpus reset is disabled; drift detection runs as monitoring-only.
+
+**Expected outcome**: honggfuzzcd ≈ honggfuzz baseline (0 Δbugs, 0% Δcov). If this holds,
+the conclusion for the paper is: "CD framework is not applicable to honggfuzz's multi-threaded
+corpus model without significant refactoring; the other 5 fuzzers show a range of effects."
+
+**Code change**: 3 lines in honggfuzz.c, commit ac9eec7f.
+
+---
+
+## 2026-06-19: dist4 results analysis — selective reset use-after-free
+
+### honggfuzzcd: UaF crash in selective reset
+
+Evidence from container log (`honggfuzzcd_libsndfile_sndfile_fuzzer_0_container.log`):
+```
+Selective corpus reset: keeping 124 seeds + 30 most-recent entries
+Corpus reset: kept 154 entries (124 seeds + 30 recent), removed 1788
+[F][2959] input_setSize():51 Too large size requested: 140337996787424 > maxSize: 163840
+Campaign terminated at 2026-06-19 08:45
+```
+Every program that triggered a reset had its container terminate at minute 1.
+Programs with 0 resets (e.g., openssl/client: +27.7% cov) ran correctly for 8h.
+
+Even when not crashing (programs with 0 resets), the pattern holds: coverage is fine.
+The crash itself meant 19/21 honggfuzzcd programs only ran for ~1 minute, making
+all dist4 honggfuzzcd results invalid.
+
+### AFL fuzzers: variance analysis across 3 experiments
+
+| Pair | dist2 Δ | dist3 Δ | dist4 Δ | Assessment |
+|---|---|---|---|---|
+| afl → aflcd | -1 | -1 | 0 | Consistent neutral |
+| aflfast → aflfastcd | +5 | +5 | +1 | aflfastcd found 27 bugs in ALL runs; baseline varied |
+| aflplusplus → aflpluspluscd | -2 | -2 | +2 | Noisy; likely neutral |
+| fairfuzz → fairfuzzcd | -3 | -3 | -6 | Consistently negative — investigate |
+| moptafl → moptaflcd | +6 | +5 | -3 | CD count varied (45/44/39); base was stable |
+
+**aflfastcd is the most robust winner**: CD variant found 27 bugs in every single experiment
+while the baseline varied from 22→22→26. The delta shrinkage in dist4 is pure baseline luck.
+
+**moptaflcd needs more data**: 3 experiments with Δ = +6/+5/-3. The 95% CI spans both
+positive and negative. Need ≥5 experiments for statistical confidence.
+
+**fairfuzzcd systematic negative effect**: 3 experiments all negative (-3/-3/-6) with stable
+baseline. Possible cause: `AFL_DRIFT_SOFT_RESET=2` env var may disable AFL's deterministic
+stages (bitflip, arithmetic) that FairFuzz relies on for rare-branch targeting. Investigate
+whether AFL_DRIFT_SOFT_RESET affects mutation strategy even without a reset firing.
+
+---
+
 ## 2026-06-19: dist4 proposed changes — selective reset for honggfuzzcd
 
 ### Problem

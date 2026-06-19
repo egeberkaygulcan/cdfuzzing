@@ -2,31 +2,53 @@
 
 ---
 
-## distributed (CloudLab): dist4 — all 12 fuzzers, 8h, honggfuzz selective reset (PLANNED)
+## distributed (CloudLab): dist5 — all 12 fuzzers, 8h, honggfuzz monitoring-only (PLANNED)
 
 Goal:
-Fix the one remaining failure mode: honggfuzzcd hard-reset destroys coverage even with only
-25 resets. Implement a selective/soft corpus reset for honggfuzz that preserves
-coverage-contributing entries instead of reverting to 5 seeds.
+Fix the dist4 use-after-free crash in honggfuzzcd. The selective reset freed dynfile_t entries
+while worker threads held raw pointers to them (outside the lock scope). Fix: disable corpus
+reset for honggfuzzcd entirely (monitoring-only). Hypothesis: 0 resets => 0 coverage loss
+=> honggfuzzcd ≈ honggfuzz baseline. Also provides a clean 4th data point for moptaflcd/aflfastcd.
 
-Code change (single file):
-`honggfuzzcd/newsrc/honggfuzz.c` — modify `drift_perform_corpus_reset()` to keep top-K
-entries sorted by coverage contribution, rather than keeping only the first N seed entries.
-Details in DECISIONS.md § dist4.
+Code change (single line in honggfuzz.c):
+Set `drift_det->reset_on_drift = false` after init. No parameter changes from dist4.
 
-Parameters (all unchanged from dist3 — honggfuzz reset strategy is the only variable):
+Status: PLANNED — requires file deployment to workers.
+See DECISIONS.md § dist5 for root cause analysis and rationale.
 
-| CD Fuzzer      | C    | SF   | COOLDOWN | WINDOW | Change from dist3              |
-|---|---|---|---|---|---|
-| honggfuzzcd    | 5    | 0.5  | 10       | 5      | **Code: selective reset**      |
-| fairfuzzcd     | 15   | 0.5  | 10       | 100    | Unchanged                      |
-| aflcd          | 5    | 0.5  | 25       | 100    | Unchanged                      |
-| aflpluspluscd  | 8    | 0.5  | 25       | 100    | Unchanged                      |
-| moptaflcd      | 5    | 0.3  | 10       | 100    | Unchanged                      |
-| aflfastcd      | 3    | 0.5  | 10       | 100    | Unchanged                      |
+---
 
-Status: PLANNED — requires honggfuzz.c selective reset implementation.
-See DECISIONS.md § dist4 for code spec and rationale.
+## distributed (CloudLab): dist4 — all 12 fuzzers, 8h, honggfuzz selective reset (COMPLETE)
+
+Goal:
+Fix honggfuzzcd coverage loss by implementing selective corpus reset (keep seeds + 30 recent
+entries, discard middle-aged ones). No parameter changes from dist3.
+
+Code change: `drift_perform_corpus_reset(dd, hfuzz, keep_seeds, keep_recent=30)`
+in drift-detect.c + honggfuzz.c (commit 9132d446).
+
+Status: COMPLETE — finished 2026-06-19 ~12:22 CDT. All 24 workers done (2 honggfuzzcd
+workers ran until ~12:13 due to 44-min openssl build time). 0 failures.
+Data: `/proj/cdfuzzing-PG0/distributed/dist4/ar/` | Plots: `…/dist4/plots/`
+
+Results summary:
+| Pair | Δbugs | Δcov% | Resets | Verdict |
+|---|---|---|---|---|
+| moptafl → moptaflcd | **-3** | +3.3% | 32 | ❌ Regressed vs dist2/3 (+6/+5). Likely variance. |
+| aflfast → aflfastcd | +1 | -2.8% | 4 | ⚠ aflfastcd found 27 bugs (same as every run); base improved (+26 vs 22). |
+| aflplusplus → aflpluspluscd | +2 | +4.8% | 16 | ⚠ Improved vs dist3 (-2). Still noisy. |
+| afl → aflcd | 0 | +0.9% | 2 | ≈ Consistent neutral. |
+| fairfuzz → fairfuzzcd | **-6** | +5.5% | 0 | ❌ 3rd consecutive negative result. Systematic? |
+| honggfuzz → honggfuzzcd | **-12** | **-62.1%** | **28** | ❌ Selective reset crashed (UaF): 19 programs ran only ~1 min. |
+
+Root-cause analysis (see DECISIONS.md § dist4 analysis):
+- honggfuzzcd selective reset use-after-free: `drift_perform_corpus_reset` freed dynfile_t
+  entries while worker threads held stale pointers outside the lock scope. Thread read
+  freed `entry->size` → garbage (140337996787424) → `input_setSize(): Too large`.
+  Crash evidence: containers terminated at minute 1 across all 19 programs that had a reset.
+- AFL fuzzers: no code changes — all differences from dist3 are variance (2 reps insufficient
+  for statistical confidence). Key observation: aflfastcd found exactly 27 bugs in all 3
+  experiments; the δ change (+5/+5/+1) is driven by baseline variance, not CD regression.
 
 ---
 

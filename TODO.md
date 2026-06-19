@@ -2,16 +2,17 @@
 
 ## High Priority
 
-- [ ] **Implement selective reset in honggfuzz.c** for dist4:
-  In `magma/fuzzers/honggfuzzcd/newsrc/honggfuzz.c`, add `honggfuzz_selective_reset()` function
-  that keeps `dd->initial_corpus_count` original seeds PLUS the 30 most recently added queue entries,
-  discards all middle-aged entries. Replace the `drift_perform_corpus_reset()` call in `driftCycle()`
-  with this new function. Full code spec in DECISIONS.md § dist4.
-  Then rebuild Docker image and re-deploy to all 24 workers.
-- [ ] **Launch dist4** in tmux: `./orchestrate.sh --run-id dist4 --timeout 8h`
-  (no worker-run.sh changes needed — only the honggfuzz.c code change from above)
-- [ ] **Push commits to GitHub** — 6+ local commits not yet pushed (SSH key not trusted on head).
-  Option: `git bundle create /tmp/cdfuzzing.bundle HEAD`, scp to local machine, then push.
+- [ ] **Deploy dist5 code change to workers and launch dist5**:
+  Only one file changed: `honggfuzzcd/newsrc/honggfuzz.c` (commit ac9eec7f).
+  `for i in $(seq 10 33); do scp -i /proj/cdfuzzing-PG0/cluster/ssh/id_rsa magma/fuzzers/honggfuzzcd/newsrc/honggfuzz.c eldarfin@192.168.1.$i:/local/repository/magma/fuzzers/honggfuzzcd/newsrc/honggfuzz.c & done; wait`
+  Then: `cd cloudlab && tmux new -d -s dist5 './orchestrate.sh --run-id dist5 --timeout 8h'`
+- [ ] **Investigate fairfuzzcd `AFL_DRIFT_SOFT_RESET=2`**: check if this env var disables
+  deterministic stages (bitflip/arith) in AFL even without a reset firing. If so,
+  disable it for fairfuzzcd or set `AFL_DRIFT_SOFT_RESET=0`.
+- [ ] **Push commits to GitHub** — 7+ local commits not yet pushed.
+  `git bundle create /tmp/cdfuzzing.bundle HEAD`, scp to local, push.
+
+## Medium Priority
 
 ## Medium Priority
 
@@ -52,6 +53,9 @@
 - [x] Fix honggfuzzcd cascade loop (peak_corpus metric + 60s time-gate) — commit 7043370d
 - [x] Update dist3 parameters (fairfuzzcd C=15, aflcd/aflpluspluscd COOLDOWN=25) — 2026-06-18
 - [x] Launch and complete dist3 — 2026-06-18 ~16:15 CDT → 2026-06-19 01:07 CDT
+- [x] Implement selective reset for honggfuzzcd — commit 9132d446 (dist4)
+- [x] Launch and complete dist4 — 2026-06-19 ~03:29 CDT → 12:22 CDT
+- [x] Diagnose dist4 honggfuzzcd crash (UaF in selective reset) — commit ac9eec7f disables reset
 - [x] Provision all 25 CloudLab nodes manually (24/24 EXIT=0) — 2026-06-17
 - [x] Verify cluster: Docker, /mydata, SSH keypair, manifest, head→worker passwordless SSH — 2026-06-17
 - [x] Fix plot_seed4.py hardcoded campaign ID "0" to glob "*" for distributed layout — 2026-06-17

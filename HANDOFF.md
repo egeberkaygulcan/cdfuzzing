@@ -40,16 +40,16 @@ See DECISIONS.md § dist4 for full code spec and rationale.
 - Results: moptaflcd +6 bugs, aflfastcd +5 bugs, aflpluspluscd ±0 (+1.6% cov), aflcd -1 (variance), fairfuzzcd -2, **honggfuzzcd -16 (761 resets — CASCADE LOOP)**
 - Root causes documented in DECISIONS.md § dist2 analysis
 
-**Distributed CloudLab experiment — `dist3` COMPLETE**
-- 24 workers, launched 2026-06-18 ~16:15 CDT, finished 2026-06-19 ~01:07 CDT
-- Results: `/proj/cdfuzzing-PG0/distributed/dist3/ar/` | Plots: `/proj/cdfuzzing-PG0/distributed/dist3/plots/`
-- Results: moptaflcd +5 bugs, aflfastcd +5 bugs, aflcd -1, aflpluspluscd -2 (+5.1% cov), fairfuzzcd -3, **honggfuzzcd -11 (-56.7% cov); cascade fixed (761→25 resets) but hard reset still too destructive**
-- Root causes documented in DECISIONS.md § dist3 analysis
+**`dist4` COMPLETE (crashed honggfuzzcd)**
+- 24 workers, launched 2026-06-19 ~03:29 CDT, finished 2026-06-19 ~12:22 CDT
+- Results: `/proj/cdfuzzing-PG0/distributed/dist4/ar/` | Plots: `…/dist4/plots/`
+- Results: moptaflcd -3, aflfastcd +1 (baseline variance), aflpluspluscd +2, aflcd 0, fairfuzzcd -6, **honggfuzzcd crashed (UaF in selective reset)**
+- Root causes documented in DECISIONS.md § dist4 analysis
 
-**`dist4` — PLANNED (not yet launched)**
-- Code change: `honggfuzzcd/newsrc/honggfuzz.c` → selective reset (keep seeds + 30 recent entries, discard middle)
-- No param changes from dist3
-- See DECISIONS.md § dist4 and EXPERIMENTS.md § dist4 for full spec
+**`dist5` — PLANNED (honggfuzzcd monitoring-only)**
+- Code change: `honggfuzzcd/newsrc/honggfuzz.c` → `drift_det->reset_on_drift = false` (commit ac9eec7f)
+- No parameter changes from dist4
+- See DECISIONS.md § dist5 and EXPERIMENTS.md § dist5 for full spec
 
 ## Important Files
 
@@ -67,11 +67,10 @@ See DECISIONS.md § dist4 for full code spec and rationale.
 - `cdfuzzing/cloudlab/`: setup-node.sh, worker-run.sh, orchestrate.sh, merge-results.sh
 - `cdfuzzing/CLOUDLAB.md`: full reference for the distributed experiment
 - `/proj/cdfuzzing-PG0/distributed/dist1_orch.log`: orchestrator log for dist1 (complete)
-- `/proj/cdfuzzing-PG0/distributed/dist2_orch.log`: orchestrator log for dist2 (complete)
 - `/proj/cdfuzzing-PG0/distributed/dist3_orch.log`: orchestrator log for dist3 (complete)
-- `/proj/cdfuzzing-PG0/distributed/dist1/`: NFS results dir for dist1
-- `/proj/cdfuzzing-PG0/distributed/dist2/`: NFS results dir for dist2
+- `/proj/cdfuzzing-PG0/distributed/dist4_orch.log`: orchestrator log for dist4 (complete)
 - `/proj/cdfuzzing-PG0/distributed/dist3/`: NFS results dir for dist3
+- `/proj/cdfuzzing-PG0/distributed/dist4/`: NFS results dir for dist4
 
 ## Commands That Worked
 
