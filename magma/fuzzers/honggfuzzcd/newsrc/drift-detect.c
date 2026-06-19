@@ -284,44 +284,68 @@ void drift_csv_update(drift_detector_t* dd, uint64_t current_iter,
 
 /* ---------- Corpus reset ---------- */
 
-void drift_perform_corpus_reset(drift_detector_t* dd, honggfuzz_t* hfuzz) {
+void drift_perform_corpus_reset(drift_detector_t* dd, honggfuzz_t* hfuzz,
+                                size_t keep_seeds, size_t keep_recent) {
     if (!dd) return;
 
-    if (dd->initial_corpus_count == 0) {
+    if (keep_seeds == 0) {
+        /* Caller explicitly supplied 0 — fall back to recorded initial count */
+        keep_seeds = dd->initial_corpus_count;
+    }
+    if (keep_seeds == 0) {
         LOG_W("No initial corpus size recorded, skipping reset");
         return;
     }
 
-    LOG_I("Resetting corpus to %zu initial seeds...", dd->initial_corpus_count);
+    LOG_I("Selective corpus reset: keeping %zu seeds + %zu most-recent entries",
+          keep_seeds, keep_recent);
 
     /*
-     * Walk the TAILQ and remove entries beyond the initial corpus.
-     * We keep the first initial_corpus_count entries and free the rest.
+     * Selective reset: keep the first keep_seeds entries (original seeds, at
+     * the TAILQ head) and the keep_recent most-recently-added entries (TAILQ
+     * tail).  Everything in between — the "middle-aged" entries — is removed.
+     *
+     * If the corpus is small enough that seeds and recent entries overlap,
+     * nothing is removed (the fuzzer hasn't built up a large corpus yet).
+     *
      * Must hold the dynfileq write lock.
      */
     MX_SCOPED_RWLOCK_WRITE(&hfuzz->mutex.dynfileq);
 
+    /* --- Pass 1: count total entries --- */
+    size_t total = 0;
+    {
+        dynfile_t* e = TAILQ_FIRST(&hfuzz->io.dynfileq);
+        while (e != NULL) { total++; e = TAILQ_NEXT(e, pointers); }
+    }
+
+    /* --- Compute removal range [remove_start, remove_end) ---
+     * remove_start: first index past the seed block
+     * remove_end  : first index of the recent block
+     * If remove_end <= remove_start there is nothing to remove. */
+    size_t remove_start = keep_seeds;
+    size_t remove_end   = (total > keep_seeds + keep_recent)
+                          ? total - keep_recent
+                          : keep_seeds;
+
+    /* --- Pass 2: walk queue, removing the middle-aged range --- */
     size_t kept = 0;
     size_t removed = 0;
-    dynfile_t* entry;
-    dynfile_t* tmp;
-
-    /* We need TAILQ_FOREACH_SAFE equivalent; honggfuzz uses TAILQ_FOREACH_HF
-       but that's not safe for removal. Use manual iteration. */
-    entry = TAILQ_FIRST(&hfuzz->io.dynfileq);
+    size_t idx = 0;
+    dynfile_t* entry = TAILQ_FIRST(&hfuzz->io.dynfileq);
     while (entry != NULL) {
-        tmp = TAILQ_NEXT(entry, pointers);
-        if (kept < dd->initial_corpus_count) {
-            kept++;
-        } else {
-            /* Remove this entry */
+        dynfile_t* tmp = TAILQ_NEXT(entry, pointers);
+        if (idx >= remove_start && idx < remove_end) {
             TAILQ_REMOVE(&hfuzz->io.dynfileq, entry, pointers);
             if (entry->data) {
                 free(entry->data);
             }
             free(entry);
             removed++;
+        } else {
+            kept++;
         }
+        idx++;
         entry = tmp;
     }
 
@@ -344,7 +368,10 @@ void drift_perform_corpus_reset(drift_detector_t* dd, honggfuzz_t* hfuzz) {
     dd->last_corpus_reset_iteration = dd->iteration;
     dd->last_corpus_reset_time_ms   = elapsed_ms;
 
-    LOG_I("Corpus reset: kept %zu seeds, removed %zu entries", kept, removed);
+    size_t kept_seeds  = (kept < keep_seeds) ? kept : keep_seeds;
+    size_t kept_recent = (kept > keep_seeds) ? (kept - keep_seeds) : 0;
+    LOG_I("Corpus reset: kept %zu entries (%zu seeds + %zu recent), removed %zu",
+          kept, kept_seeds, kept_recent, removed);
 
     /* Clear drift history so detector needs fresh data before re-triggering */
     dd->history_len = 0;

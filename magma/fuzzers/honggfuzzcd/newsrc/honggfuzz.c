@@ -328,8 +328,9 @@ static void driftCycle(honggfuzz_t* hfuzz) {
                   elapsed_sec, mutations);
 
             if (drift_det->reset_on_drift) {
-                LOG_W("Performing corpus reset...");
-                drift_perform_corpus_reset(drift_det, hfuzz);
+                LOG_W("Performing selective corpus reset (seeds + 30 recent)...");
+                drift_perform_corpus_reset(drift_det, hfuzz,
+                                           drift_det->initial_corpus_count, 30);
                 /* Reset peak so next epoch starts fresh and the KS test can
                  * detect the new growth→plateau transition. */
                 honggfuzz_peak_corpus = 0;

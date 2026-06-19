@@ -90,8 +90,12 @@ void drift_csv_update(drift_detector_t* dd, uint64_t current_iter,
                       uint64_t coverage, uint64_t elapsed_ms,
                       uint64_t corpus);
 
-/* Perform corpus reset on a honggfuzz_t instance */
-void drift_perform_corpus_reset(drift_detector_t* dd, honggfuzz_t* hfuzz);
+/* Perform corpus reset on a honggfuzz_t instance.
+ * keep_seeds  : number of original seed entries to retain (from queue head).
+ * keep_recent : number of most-recently-added entries to retain (from queue tail).
+ *               Pass 0 for the original hard-reset behaviour (seeds-only). */
+void drift_perform_corpus_reset(drift_detector_t* dd, honggfuzz_t* hfuzz,
+                                size_t keep_seeds, size_t keep_recent);
 
 /* Write human-readable diagnostic stats file */
 void drift_write_stats_file(drift_detector_t* dd, const char* out_dir,
