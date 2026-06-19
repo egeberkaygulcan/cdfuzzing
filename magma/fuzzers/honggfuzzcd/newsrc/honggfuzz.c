@@ -328,9 +328,9 @@ static void driftCycle(honggfuzz_t* hfuzz) {
                   elapsed_sec, mutations);
 
             if (drift_det->reset_on_drift) {
-                LOG_W("Performing selective corpus reset (seeds + 30 recent)...");
+                LOG_W("Performing corpus reset (seeds only — reset_on_drift enabled)...");
                 drift_perform_corpus_reset(drift_det, hfuzz,
-                                           drift_det->initial_corpus_count, 30);
+                                           drift_det->initial_corpus_count, 0);
                 /* Reset peak so next epoch starts fresh and the KS test can
                  * detect the new growth→plateau transition. */
                 honggfuzz_peak_corpus = 0;
@@ -507,7 +507,13 @@ int main(int argc, char** argv) {
         }
         /* Record initial corpus size for reset baseline */
         drift_det->initial_corpus_count = ATOMIC_GET(hfuzz.io.dynfileqCnt);
-        LOG_I("Drift detection initialized (window=%u, threshold=%.3f, initial_corpus=%zu)",
+        /* Disable corpus reset for honggfuzz: honggfuzz's multi-threaded input
+         * model means worker threads can hold raw dynfile_t pointers outside the
+         * dynfileq lock.  Freeing entries while threads hold such pointers causes
+         * a use-after-free crash (observed dist4: input_setSize garbage size).
+         * With reset disabled, drift detection runs as monitoring-only. */
+        drift_det->reset_on_drift = false;
+        LOG_I("Drift detection initialized (window=%u, threshold=%.3f, initial_corpus=%zu, reset=OFF)",
               drift_det->window_size, drift_det->drift_threshold, drift_det->initial_corpus_count);
     }
 
