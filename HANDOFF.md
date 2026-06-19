@@ -2,10 +2,10 @@
 
 ## Current Goal
 
-Evaluate CD-Fuzzing on the Magma benchmark. **`dist2` is COMPLETE** (finished 2026-06-18 ~15:24 CDT).
-Next step: implement `peak_corpus` code fix in `honggfuzz.c` and update `worker-run.sh` with dist3
-parameters, then launch `dist3` (same cluster, same 8h/12 fuzzers/2 reps/9 targets).
-See DECISIONS.md § dist3 for full parameter table and code change spec.
+Evaluate CD-Fuzzing on the Magma benchmark. **`dist3` is COMPLETE** (finished 2026-06-19 ~01:07 CDT).
+Next step: implement `selective_reset` code fix in `honggfuzz.c` (keep seeds + 30 recent entries
+rather than reverting to seeds-only), then launch `dist4`.
+See DECISIONS.md § dist4 for full code spec and rationale.
 
 ## Current State
 
@@ -40,11 +40,16 @@ See DECISIONS.md § dist3 for full parameter table and code change spec.
 - Results: moptaflcd +6 bugs, aflfastcd +5 bugs, aflpluspluscd ±0 (+1.6% cov), aflcd -1 (variance), fairfuzzcd -2, **honggfuzzcd -16 (761 resets — CASCADE LOOP)**
 - Root causes documented in DECISIONS.md § dist2 analysis
 
-**`dist3` — PLANNED (not yet launched)**
-- Code change: `honggfuzzcd/newsrc/honggfuzz.c:driftCycle()` → peak_corpus monotone metric
-- Param changes: fairfuzzcd C=3→15; aflcd COOLDOWN=10→25; aflpluspluscd COOLDOWN=10→25
-- Unchanged: moptaflcd C=5/SF=0.3, aflfastcd C=3/SF=0.5
-- See EXPERIMENTS.md § dist3 for full spec
+**Distributed CloudLab experiment — `dist3` COMPLETE**
+- 24 workers, launched 2026-06-18 ~16:15 CDT, finished 2026-06-19 ~01:07 CDT
+- Results: `/proj/cdfuzzing-PG0/distributed/dist3/ar/` | Plots: `/proj/cdfuzzing-PG0/distributed/dist3/plots/`
+- Results: moptaflcd +5 bugs, aflfastcd +5 bugs, aflcd -1, aflpluspluscd -2 (+5.1% cov), fairfuzzcd -3, **honggfuzzcd -11 (-56.7% cov); cascade fixed (761→25 resets) but hard reset still too destructive**
+- Root causes documented in DECISIONS.md § dist3 analysis
+
+**`dist4` — PLANNED (not yet launched)**
+- Code change: `honggfuzzcd/newsrc/honggfuzz.c` → selective reset (keep seeds + 30 recent entries, discard middle)
+- No param changes from dist3
+- See DECISIONS.md § dist4 and EXPERIMENTS.md § dist4 for full spec
 
 ## Important Files
 
@@ -62,9 +67,11 @@ See DECISIONS.md § dist3 for full parameter table and code change spec.
 - `cdfuzzing/cloudlab/`: setup-node.sh, worker-run.sh, orchestrate.sh, merge-results.sh
 - `cdfuzzing/CLOUDLAB.md`: full reference for the distributed experiment
 - `/proj/cdfuzzing-PG0/distributed/dist1_orch.log`: orchestrator log for dist1 (complete)
-- `/proj/cdfuzzing-PG0/distributed/dist2_orch.log`: live orchestrator log for dist2
+- `/proj/cdfuzzing-PG0/distributed/dist2_orch.log`: orchestrator log for dist2 (complete)
+- `/proj/cdfuzzing-PG0/distributed/dist3_orch.log`: orchestrator log for dist3 (complete)
 - `/proj/cdfuzzing-PG0/distributed/dist1/`: NFS results dir for dist1
 - `/proj/cdfuzzing-PG0/distributed/dist2/`: NFS results dir for dist2
+- `/proj/cdfuzzing-PG0/distributed/dist3/`: NFS results dir for dist3
 
 ## Commands That Worked
 

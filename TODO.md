@@ -2,27 +2,18 @@
 
 ## High Priority
 
-- [ ] **Implement `peak_corpus` fix in honggfuzz.c** before dist3:
-  In `magma/fuzzers/honggfuzzcd/newsrc/honggfuzz.c` `driftCycle()`, replace:
-  ```c
-  // use raw corpus count
-  ```
-  with:
-  ```c
-  static size_t peak_corpus = 0;
-  if (corpus > peak_corpus) peak_corpus = corpus;
-  // use peak_corpus instead of corpus for stagnation threshold comparison
-  ```
-  Then re-deploy to all 24 workers via scp.
-- [ ] **Update worker-run.sh for dist3 parameters**:
-  - fairfuzzcd: C=3 → **C=15**
-  - aflcd, aflpluspluscd: COOLDOWN=10 → **COOLDOWN=25** (add new env var `CD_COOLDOWN`)
-  - moptaflcd, aflfastcd: unchanged
-  Deploy to all 24 workers via scp.
-- [ ] **Launch dist3** in tmux: `./orchestrate.sh --run-id dist3 --timeout 8h`
-- [ ] **Push commits to GitHub** — 5 local commits not yet pushed (SSH key not trusted on head).
-  Commits: b97ea801, 0a60bf3c, 95b34cc0, 03cc0915, 6d7bc0f6 (MD updates).
+- [ ] **Implement selective reset in honggfuzz.c** for dist4:
+  In `magma/fuzzers/honggfuzzcd/newsrc/honggfuzz.c`, add `honggfuzz_selective_reset()` function
+  that keeps `dd->initial_corpus_count` original seeds PLUS the 30 most recently added queue entries,
+  discards all middle-aged entries. Replace the `drift_perform_corpus_reset()` call in `driftCycle()`
+  with this new function. Full code spec in DECISIONS.md § dist4.
+  Then rebuild Docker image and re-deploy to all 24 workers.
+- [ ] **Launch dist4** in tmux: `./orchestrate.sh --run-id dist4 --timeout 8h`
+  (no worker-run.sh changes needed — only the honggfuzz.c code change from above)
+- [ ] **Push commits to GitHub** — 6+ local commits not yet pushed (SSH key not trusted on head).
   Option: `git bundle create /tmp/cdfuzzing.bundle HEAD`, scp to local machine, then push.
+
+## Medium Priority
 
 ## Medium Priority
 
@@ -58,6 +49,9 @@
 - [x] Generate parameter evaluation report — `parameter_eval.txt` — 2026-06-17
 - [x] Fix boot_command() quoting bug in profile.py — 2026-06-17
 - [x] Fix /users shared-FS assumption in all cloudlab/*.sh — 2026-06-17
+- [x] Fix honggfuzzcd cascade loop (peak_corpus metric + 60s time-gate) — commit 7043370d
+- [x] Update dist3 parameters (fairfuzzcd C=15, aflcd/aflpluspluscd COOLDOWN=25) — 2026-06-18
+- [x] Launch and complete dist3 — 2026-06-18 ~16:15 CDT → 2026-06-19 01:07 CDT
 - [x] Provision all 25 CloudLab nodes manually (24/24 EXIT=0) — 2026-06-17
 - [x] Verify cluster: Docker, /mydata, SSH keypair, manifest, head→worker passwordless SSH — 2026-06-17
 - [x] Fix plot_seed4.py hardcoded campaign ID "0" to glob "*" for distributed layout — 2026-06-17

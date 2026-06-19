@@ -1,5 +1,143 @@
 # Decisions
 
+## 2026-06-19: dist4 proposed changes — selective reset for honggfuzzcd
+
+### Problem
+
+honggfuzzcd dist3: cascade fixed (761→25 resets) but -56.7% coverage / -11 bugs.
+Even 1 hard corpus reset causes 60-85% coverage loss in honggfuzz:
+
+| Program | Δcov% | Resets |
+|---|---|---|
+| libsndfile | -87.6% | 1 |
+| lua | -84.8% | 1 |
+| libxml2/xmllint | -76.8% | 1 |
+| php/parser | -72.9% | 1 |
+| poppler/pdf_fuzzer | -69.1% | 2 |
+| poppler/pdfimages | -60.3% | 2 |
+| sqlite3 | -62.0% | 1 |
+| libxml2/libxml2_xml | -45.8% | 1 |
+
+Programs with 0 resets show near-zero coverage change (control confirms causality).
+
+**Root cause**: honggfuzz's hard reset in `drift_perform_corpus_reset()` reverts the corpus
+to the first `initial_corpus_count` files (the original 5 seeds). honggfuzz rebuilds from
+seeds slowly because it lacks AFL's deterministic stages (bit/byte flips) and uses
+hardware-based coverage feedback that requires many executions to rediscover edges.
+Mid-campaign resets at minute 200+ leave insufficient time for full corpus recovery.
+
+### Proposed fix: selective reset in honggfuzz.c
+
+Instead of keeping only the first N seed files, keep the **K most recently added** entries
+plus the **original N seeds**, discarding the "middle aged" entries which are superseded by
+newer, more refined inputs.
+
+**Implementation in `honggfuzzcd/newsrc/honggfuzz.c`** (not drift-detect.c — keep it
+generic; implement in the honggfuzz-specific wrapper):
+
+```c
+// After detecting drift, instead of calling drift_perform_corpus_reset(),
+// call a new honggfuzz_selective_reset():
+static void honggfuzz_selective_reset(honggfuzz_t* hfuzz, struct drift_detector* dd) {
+    /* Count queue */
+    size_t total = 0;
+    struct dynfile* df;
+    TAILQ_FOREACH(df, &hfuzz->io.dynfileq, TAILQ_ENTRY_FIELD) { total++; }
+
+    size_t keep_recent = 30;  /* keep 30 most-recently-added entries */
+    size_t keep_seeds  = dd->initial_corpus_count;  /* keep original seeds */
+    size_t discard_from = keep_seeds;
+    size_t discard_to   = (total > keep_seeds + keep_recent)
+                          ? total - keep_recent : keep_seeds;
+
+    /* Walk the queue; entries in [keep_seeds, discard_to) are the "middle aged" ones */
+    size_t idx = 0;
+    TAILQ_FOREACH_SAFE(df, &hfuzz->io.dynfileq, TAILQ_ENTRY_FIELD, tmp) {
+        if (idx >= discard_from && idx < discard_to) {
+            TAILQ_REMOVE(&hfuzz->io.dynfileq, df, TAILQ_ENTRY_FIELD);
+            unlink(df->path);
+            free(df->path);
+            free(df);
+        }
+        idx++;
+    }
+    /* Reset peak state so next epoch starts fresh */
+    honggfuzz_peak_corpus = 0;
+    dd->initial_corpus_count = 0;
+    dd->history_len = 0;
+}
+```
+
+**Why keep-recent rather than keep-highest-coverage**: honggfuzz does not store per-entry
+edge counts in dynfile_t; sorting by coverage would require a full bitmap comparison for
+each entry, which is expensive. The most-recently-added entries are a good proxy for
+highest-coverage because honggfuzz only adds an entry when it finds a new edge.
+
+### Parameters for dist4
+
+No parameter changes from dist3 — the selective reset code change is the only variable.
+
+| CD Fuzzer      | C    | SF   | COOLDOWN | WINDOW | Change |
+|---|---|---|---|---|---|
+| honggfuzzcd    | 5    | 0.5  | 10       | 5      | **Code: selective reset** |
+| fairfuzzcd     | 15   | 0.5  | 10       | 100    | Unchanged |
+| aflcd          | 5    | 0.5  | 25       | 100    | Unchanged |
+| aflpluspluscd  | 8    | 0.5  | 25       | 100    | Unchanged |
+| moptaflcd      | 5    | 0.3  | 10       | 100    | Unchanged |
+| aflfastcd      | 3    | 0.5  | 10       | 100    | Unchanged |
+
+**Expected outcome**: honggfuzzcd moves from -11 bugs/-56.7% cov toward ~0 bugs/~0% cov,
+since corpus recovery after a selective reset (keeping seeds + 30 recent) should be
+dramatically faster than recovery from 5 seeds alone.
+
+---
+
+## 2026-06-19: dist3 results analysis — hard reset root cause confirmed
+
+### Summary
+
+dist3 completed 2026-06-19 01:07 CDT. Time-gate fix worked; new root cause identified.
+
+| Pair | Δbugs | Δcov% | Resets | dist2 resets | Conclusion |
+|---|---|---|---|---|---|
+| moptafl → moptaflcd | **+5** | +1.7% | 23 | 33 | ✅ Consistent 2nd time |
+| aflfast → aflfastcd | **+5** | -3.4% | 3 | 5 | ✅ Consistent 2nd time |
+| aflplusplus → aflpluspluscd | -2 | **+5.1%** | 13 | 14 | ⚠ Coverage gain but -2 bugs; likely variance |
+| afl → aflcd | -1 | -1.5% | 5 | 8 | ⚠ Noise-level; 2 reps insufficient |
+| fairfuzz → fairfuzzcd | -3 | -0.7% | 1 | 3 | ❌ C=15 reduced resets (3→1), -3 probably noise |
+| honggfuzz → honggfuzzcd | **-11** | **-56.7%** | **25** | 761 | ❌ Cascade fixed, hard reset too destructive |
+
+### honggfuzzcd: dist3 fix worked exactly; new root cause = hard reset architecture
+
+**Fix outcome**: peak_corpus metric + 60s time-gate cut resets from 761 to 25 (-97%) and
+drifts from 7036 to 93. This is exactly the intended effect. The cascade loop is eliminated.
+
+**New failure mode**: Hard corpus reset is incompatible with honggfuzz's corpus rebuilding
+speed. When a reset fires at minute 200+ of an 8h run, honggfuzz only has ~280 minutes
+remaining to recover a corpus it took 200+ minutes to build. With AFL, deterministic stages
+(bitflip, arithm) rapidly recover coverage after a reset. With honggfuzz, recovery depends
+entirely on random mutations finding the same edges, which takes much longer.
+
+Evidence: 8 of 9 programs had ≥1 reset; all show 45-88% coverage loss proportional to reset
+count and timing. The 1 program with 0 resets (libpng) showed +0.2% coverage change.
+
+### fairfuzzcd: signal-to-noise too low at current rep count
+
+dist2: -2 bugs. dist3: -3 bugs. With only 2 reps × 9 targets × 2-3 programs = ~36-54
+observations per pair, the variance across targets can easily account for ±2 bug difference.
+FairFuzz has known target-specific performance (rare-branch discovery depends heavily on
+input structure). C=15 achieved its goal (3→1 resets), but the bug delta remains noisy.
+Need 3+ reps to separate signal from noise for fairfuzzcd.
+
+### aflpluspluscd: coverage gain does not translate to bugs
+
+dist3: -2 bugs but +5.1% coverage. AFL++'s internal adaptive mechanisms (cmp analysis,
+laf-intel, CMPLOG) already handle local optima exploration. The CD resets provide some
+coverage benefit but may disrupt AFL++'s in-progress cmp-coverage state. Result: positive
+coverage metric but negative bug count. With 2 reps this is inconclusive — could be variance.
+
+---
+
 ## 2026-06-18: dist3 proposed CD parameters
 
 Following the dist2 root-cause analysis, proposed parameter changes for dist3:

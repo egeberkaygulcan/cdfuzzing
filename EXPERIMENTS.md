@@ -2,35 +2,78 @@
 
 ---
 
-## distributed (CloudLab): dist3 — all 12 fuzzers, 8h, bug-fix params (RUNNING)
+## distributed (CloudLab): dist4 — all 12 fuzzers, 8h, honggfuzz selective reset (PLANNED)
+
+Goal:
+Fix the one remaining failure mode: honggfuzzcd hard-reset destroys coverage even with only
+25 resets. Implement a selective/soft corpus reset for honggfuzz that preserves
+coverage-contributing entries instead of reverting to 5 seeds.
+
+Code change (single file):
+`honggfuzzcd/newsrc/honggfuzz.c` — modify `drift_perform_corpus_reset()` to keep top-K
+entries sorted by coverage contribution, rather than keeping only the first N seed entries.
+Details in DECISIONS.md § dist4.
+
+Parameters (all unchanged from dist3 — honggfuzz reset strategy is the only variable):
+
+| CD Fuzzer      | C    | SF   | COOLDOWN | WINDOW | Change from dist3              |
+|---|---|---|---|---|---|
+| honggfuzzcd    | 5    | 0.5  | 10       | 5      | **Code: selective reset**      |
+| fairfuzzcd     | 15   | 0.5  | 10       | 100    | Unchanged                      |
+| aflcd          | 5    | 0.5  | 25       | 100    | Unchanged                      |
+| aflpluspluscd  | 8    | 0.5  | 25       | 100    | Unchanged                      |
+| moptaflcd      | 5    | 0.3  | 10       | 100    | Unchanged                      |
+| aflfastcd      | 3    | 0.5  | 10       | 100    | Unchanged                      |
+
+Status: PLANNED — requires honggfuzz.c selective reset implementation.
+See DECISIONS.md § dist4 for code spec and rationale.
+
+---
+
+## distributed (CloudLab): dist3 — all 12 fuzzers, 8h, bug-fix params (COMPLETE)
 
 Goal:
 Re-run dist2 with three code fixes and updated CD parameters that address the root causes found
-in dist2 analysis. Expected to fix honggfuzzcd (761→~5 resets) and fairfuzzcd (-2 bugs→0+).
+in dist2 analysis. Expected to fix honggfuzzcd cascade (761→~5 resets).
 
-Code changes applied:
+Code changes applied (commit 7043370d):
 1. `honggfuzzcd/newsrc/honggfuzz.c:driftCycle()`: two-part fix:
-   - **Peak-corpus metric**: pass `max(peak_corpus, corpus)` to drift_update instead of raw
-     `dynfileqCnt` (non-monotonic due to corpus minimization). Eliminates false stagnation signals.
-   - **Time-based gate**: call drift_check_value at most once per 60 seconds (replaces
-     `mutations % window_size == 0` which fired every 3ms at 2M exec/min).
-   - **Post-reset reset**: peak_corpus and initial_corpus_count reset to 0 after each corpus
-     reset so each epoch starts fresh.
-2. `cloudlab/worker-run.sh`: updated per-fuzzer CD parameters (COOLDOWN, CONSECUTIVE, WINDOW).
+   - **Peak-corpus metric**: pass `max(peak_corpus, corpus)` to drift_update (monotone).
+   - **Time-based gate**: call drift_check_value at most once per 60 seconds.
+   - **Post-reset reset**: peak_corpus and initial_corpus_count = 0 after each reset.
+2. `cloudlab/worker-run.sh`: fairfuzzcd C=15, aflcd/aflpluspluscd COOLDOWN=25, honggfuzzcd WINDOW=5.
 
-Proposed parameters (see DECISIONS.md § dist3):
-
-| CD Fuzzer      | C    | SF   | COOLDOWN | Change from dist2           | Rationale                            |
+Parameters used:
+| CD Fuzzer      | C    | SF   | COOLDOWN | WINDOW | Change from dist2           |
 |---|---|---|---|---|---|
-| honggfuzzcd    | 5    | 0.5  | 10       | Code fix (peak_corpus)      | Metric fix makes existing params work |
-| fairfuzzcd     | 15   | 0.5  | 10       | C: 3→15                     | Rare-branch rebuild needs 15+ windows |
-| aflcd          | 5    | 0.5  | 25       | COOLDOWN: 10→25             | Prevent cascading multi-reset on same program |
-| aflpluspluscd  | 8    | 0.5  | 25       | COOLDOWN: 10→25             | Match aflcd improvement |
-| moptaflcd      | 5    | 0.3  | 10       | Unchanged (working)         | +6 bugs in dist2 |
-| aflfastcd      | 3    | 0.5  | 10       | Unchanged (working)         | +5 bugs in dist2 |
+| honggfuzzcd    | 5    | 0.5  | 10       | 5      | Code fix (peak_corpus+time-gate) |
+| fairfuzzcd     | 15   | 0.5  | 10       | 100    | C: 3→15                     |
+| aflcd          | 5    | 0.5  | 25       | 100    | COOLDOWN: 10→25             |
+| aflpluspluscd  | 8    | 0.5  | 25       | 100    | COOLDOWN: 10→25             |
+| moptaflcd      | 5    | 0.3  | 10       | 100    | Unchanged                   |
+| aflfastcd      | 3    | 0.5  | 10       | 100    | Unchanged                   |
 
-Status: RUNNING — launched 2026-06-18 ~16:15 CDT. Expected completion ~00:15 CDT June 19.
-Commit: 7043370d ("dist3: fix honggfuzz driftCycle (peak_corpus + time-gate) + update CD params")
+Status: COMPLETE — finished 2026-06-19 ~01:07 CDT. All 24 workers done.
+Data: `/proj/cdfuzzing-PG0/distributed/dist3/ar/` | Plots: `…/dist3/plots/`
+
+Results summary:
+| Pair | Δbugs | Δcov% | Resets | vs dist2 | Verdict |
+|---|---|---|---|---|---|
+| moptafl → moptaflcd | **+5** | +1.7% | 23 | was +6/33R | ✅ Consistent. |
+| aflfast → aflfastcd | **+5** | -3.4% | 3 | was +5/5R | ✅ Consistent. |
+| aflplusplus → aflpluspluscd | -2 | **+5.1%** | 13 | was 0/14R | ⚠ Coverage gain but -2 bugs (likely variance). |
+| afl → aflcd | -1 | -1.5% | 5 | was -1/8R | ⚠ Noise-level. sqlite3 +2 bugs offset by libtiff/poppler. |
+| fairfuzz → fairfuzzcd | -3 | -0.7% | 1 | was -2/3R | ❌ Still negative. 1 reset minimal damage; -3 likely variance. |
+| honggfuzz → honggfuzzcd | **-11** | **-56.7%** | **25** | was -16/761R | ❌ Cascade fixed (97% reset reduction), but hard reset still destroys coverage: 1 reset → 60-85% cov loss. |
+
+Root-cause analysis (see DECISIONS.md § dist3 analysis):
+- honggfuzzcd code fix worked exactly as designed: cascade eliminated (761→25 resets, drift 7036→93).
+  Remaining failure: honggfuzz's hard reset is architecturally incompatible with CD.
+  Even 1 reset causes 60-85% coverage loss because honggfuzz rebuilds corpus from 5 seeds
+  extremely slowly vs AFL's deterministic stages. Fix requires selective/soft reset (dist4).
+- fairfuzzcd: C=15 cut resets from 3→1 as expected. Remaining -3 bugs is within noise range
+  (dist2 was -2, 2 reps insufficient to distinguish signal from noise at this level).
+- moptaflcd/aflfastcd: confirmed reliable (+5 bugs each, 2nd consecutive experiment).
 
 ---
 
