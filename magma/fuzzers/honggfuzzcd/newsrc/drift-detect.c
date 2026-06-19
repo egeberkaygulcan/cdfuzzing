@@ -337,10 +337,15 @@ void drift_perform_corpus_reset(drift_detector_t* dd, honggfuzz_t* hfuzz,
         dynfile_t* tmp = TAILQ_NEXT(entry, pointers);
         if (idx >= remove_start && idx < remove_end) {
             TAILQ_REMOVE(&hfuzz->io.dynfileq, entry, pointers);
-            if (entry->data) {
-                free(entry->data);
-            }
-            free(entry);
+            /* Zombie: do NOT free entry->data or entry.  Worker threads in
+             * input_prepareDynamicInput() hold a raw dynfile_t* (run->current)
+             * outside the dynfileq lock.  Freeing the struct while a thread
+             * holds that pointer causes a use-after-free (observed dist4).
+             * Setting size=0 marks the entry as expired: any thread that still
+             * holds the pointer will call input_setSize(run,0) and
+             * memcpy(...,data,0) — both safe.  The entry's memory is
+             * intentionally leaked; resets are rare so the leak is negligible. */
+            entry->size = 0;
             removed++;
         } else {
             kept++;

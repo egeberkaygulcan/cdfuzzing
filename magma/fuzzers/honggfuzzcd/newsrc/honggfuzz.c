@@ -507,14 +507,14 @@ int main(int argc, char** argv) {
         }
         /* Record initial corpus size for reset baseline */
         drift_det->initial_corpus_count = ATOMIC_GET(hfuzz.io.dynfileqCnt);
-        /* Disable corpus reset for honggfuzz: honggfuzz's multi-threaded input
-         * model means worker threads can hold raw dynfile_t pointers outside the
-         * dynfileq lock.  Freeing entries while threads hold such pointers causes
-         * a use-after-free crash (observed dist4: input_setSize garbage size).
-         * With reset disabled, drift detection runs as monitoring-only. */
-        drift_det->reset_on_drift = false;
-        LOG_I("Drift detection initialized (window=%u, threshold=%.3f, initial_corpus=%zu, reset=OFF)",
-              drift_det->window_size, drift_det->drift_threshold, drift_det->initial_corpus_count);
+        /* Reset is safe: drift_perform_corpus_reset() no longer frees entries
+         * (zombie approach -- see drift-detect.c), eliminating the UaF crash
+         * observed in dist4 where worker threads held raw dynfile_t* pointers
+         * outside the dynfileq lock while the reset freed those entries. */
+        LOG_I("Drift detection initialized (window=%u, threshold=%.3f, initial_corpus=%zu, reset=%s)",
+              drift_det->window_size, drift_det->drift_threshold,
+              drift_det->initial_corpus_count,
+              drift_det->reset_on_drift ? "ON" : "OFF");
     }
 
     pthread_t sigthread;

@@ -77,17 +77,29 @@ CD_CONSECUTIVE=5
 CD_STAGNATION=0.5
 CD_COOLDOWN=10
 CD_WINDOW=100
+CD_SOFT_RESET=2   # 0=full-corpus-reset 1=det+havoc 2=havoc-only
+CD_HAVOC_BOOST=2  # havoc energy multiplier after reset
 if [[ "$FUZZER" == *cd ]]; then
     case "$FUZZER" in
         aflcd)         CD_CONSECUTIVE=5; CD_STAGNATION=0.5; CD_COOLDOWN=25 ;;
         aflpluspluscd) CD_CONSECUTIVE=8; CD_STAGNATION=0.5; CD_COOLDOWN=25 ;;
         fairfuzzcd)    CD_CONSECUTIVE=15; CD_STAGNATION=0.5 ;;
-        moptaflcd)     CD_CONSECUTIVE=5;  CD_STAGNATION=0.3 ;;
-        aflfastcd)     CD_CONSECUTIVE=3;  CD_STAGNATION=0.5 ;;
         honggfuzzcd)   CD_CONSECUTIVE=5;  CD_STAGNATION=0.5; CD_WINDOW=5 ;;
     esac
 fi
-log "CD params: CONSECUTIVE=$CD_CONSECUTIVE STAGNATION=$CD_STAGNATION COOLDOWN=$CD_COOLDOWN WINDOW=$CD_WINDOW"
+
+# Rep 2: parameter sweep — test SOFT_RESET=1 (det+havoc) for AFL-based fuzzers
+# and tighter drift window for honggfuzzcd.  Non-CD reps 2 are pure replications.
+if [[ "$REP" == "2" ]] && [[ "$FUZZER" == *cd ]]; then
+    case "$FUZZER" in
+        aflcd)         CD_SOFT_RESET=1; CD_HAVOC_BOOST=1 ;;
+        aflpluspluscd) CD_SOFT_RESET=1; CD_HAVOC_BOOST=1; CD_CONSECUTIVE=6 ;;
+        fairfuzzcd)    CD_SOFT_RESET=1; CD_HAVOC_BOOST=1 ;;
+        honggfuzzcd)   CD_WINDOW=3; CD_CONSECUTIVE=3 ;;  # monitoring-only sensitivity test
+    esac
+    log "REP=2 sweep: SOFT_RESET=$CD_SOFT_RESET HAVOC_BOOST=$CD_HAVOC_BOOST CONSECUTIVE=$CD_CONSECUTIVE WINDOW=$CD_WINDOW"
+fi
+log "CD params: CONSECUTIVE=$CD_CONSECUTIVE STAGNATION=$CD_STAGNATION COOLDOWN=$CD_COOLDOWN WINDOW=$CD_WINDOW SOFT_RESET=$CD_SOFT_RESET HAVOC_BOOST=$CD_HAVOC_BOOST"
 
 # --- Generate a single-fuzzer captainrc -----------------------------------
 CAPTAINRC="$LOCALWORK/captainrc_${NODE_TAG}"
@@ -106,9 +118,9 @@ CAPTAINRC="$LOCALWORK/captainrc_${NODE_TAG}"
     echo "# CD drift parameters (no effect on baseline fuzzers)"
     echo "export AFL_DRIFT_WINDOW=$CD_WINDOW"
     echo "export AFL_DRIFT_THRESHOLD=0.05"
-    echo "export AFL_DRIFT_SOFT_RESET=2"
+    echo "export AFL_DRIFT_SOFT_RESET=$CD_SOFT_RESET"
     echo "export AFL_DRIFT_MAX_RESETS=0"
-    echo "export AFL_DRIFT_HAVOC_BOOST=2"
+    echo "export AFL_DRIFT_HAVOC_BOOST=$CD_HAVOC_BOOST"
     echo "export AFL_DRIFT_BOOST_CYCLES=1"
     echo "export AFL_DRIFT_COOLDOWN=$CD_COOLDOWN"
     echo "export AFL_DRIFT_CONSECUTIVE=$CD_CONSECUTIVE"
