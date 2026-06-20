@@ -67,6 +67,48 @@ Hypothesis: switching to SOFT_RESET=1 will make aflcd/aflpluspluscd/fairfuzzcd �
 
 ---
 
+## 2026-06-20: dist6 outcomes
+
+### Results (8 fuzzers × 3 reps, 8h each)
+| Pair | Δbugs | Δcov% | Resets | Verdict |
+|---|---|---|---|---|
+| afl → aflcd | **+2** | -0.2% | 6 | ✅ 2nd positive run |
+| fairfuzz → fairfuzzcd | **+1** | -1.4% | 0 | ✅ Improved from -3 in dist5 |
+| aflplusplus → aflpluspluscd | **-3** | +0.5% | 10 | ❌ Still negative |
+| honggfuzz → honggfuzzcd | **INVALID** | **INVALID** | 5 | ⚠ Data loss — see below |
+
+### Rep2 SOFT_RESET=1 sweep interpretation
+- **aflcd**: Rep 2 SOFT_RESET=1 results are in the +2 aggregate. The total is positive, suggesting
+  the sweep didn't hurt and may have helped.
+- **fairfuzzcd**: Overall +1 (improved from -3). SOFT_RESET=1 in rep2 is a likely contributor —
+  re-running rare-branch deterministic mutations post-reset aligns with FairFuzz's design.
+- **aflpluspluscd**: Still -3 even with SOFT_RESET=1 rep2 included. The CD interference with AFL++
+  strategies (e.g., CMPLOG, MOpt scheduling) may be fundamental, not a reset-mode issue.
+
+### NFS disk quota data loss — honggfuzzcd invalid
+The NFS `/proj/cdfuzzing-PG0` was at 100% capacity when the 3 honggfuzzcd workers tried to
+rsync their results (~06:52 CDT June 20). The `rsync` command uses `2>/dev/null`, so quota
+errors were silently swallowed. Only the first 5 of 21 programs (libpng, libsndfile, libtiff×2,
+libxml2×1 from rep1 only) made it to NFS. The honggfuzzcd -23 bugs / -89.7% coverage result
+is an artifact of missing data, NOT a real measurement.
+
+Also partially affected (minor):
+- afl rep2, aflplusplus rep2, honggfuzz rep2, aflpluspluscd rep2 (all had quota errors on .done)
+  These reps likely had most results saved (they finished earlier and had more NFS headroom).
+
+**Root cause of NFS full**: honggfuzz and dist5/dist6 accumulate `*.honggfuzz.cov` corpus files
+in the output directory (not in `corpus/` so not excluded by rsync). Each file is ~500 bytes
+but allocates a full 4KB block; 2000+ files per run × many programs × many dists = GBs of
+small-file overhead. Compounded by AFL crash files from `findings/crashes/`.
+
+**Fix needed before dist7**:
+1. Add `--exclude '*.honggfuzz.cov'` (or `--exclude 'output/'` for honggfuzz) to the rsync in
+   `worker-run.sh` — honggfuzz corpus files are seeds, not findings; not needed for analysis.
+2. Add NFS space pre-check before captain launch (warn/abort if <10GB free).
+3. Consider deleting dist4 ar/ to reclaim space (dist4 has only partial honggfuzzcd data anyway).
+
+---
+
 ## 2026-06-19: dist5 proposed change — honggfuzzcd monitoring-only (no reset)
 
 **Problem**: dist4 selective reset crashed with use-after-free in every program that had a reset.

@@ -2,7 +2,7 @@
 
 ---
 
-## distributed (CloudLab): dist6 — 8 fuzzers × 3 reps, 8h, honggfuzz UaF fix + rep2 param sweep (PLANNED)
+## distributed (CloudLab): dist6 — 8 fuzzers × 3 reps, 8h, honggfuzz UaF fix + rep2 param sweep (COMPLETE)
 
 Goal:
 Three changes from dist5:
@@ -29,12 +29,29 @@ Code changes (commit a0d951f8):
 - `worker-run.sh`: add rep2 override block with SOFT_RESET/HAVOC_BOOST variables
 - `cluster/manifest.txt` (NFS, not in repo): 8 fuzzers × 3 reps = 24 workers
 
-Status: PLANNED — auto-queued in `tmux:dist6_wait`; will launch when dist5 finishes (~21:25 CDT).
+Status: COMPLETE — launched 2026-06-19 ~21:25 CDT, finished 2026-06-20 ~06:52 CDT. 24/24 workers done
+(7 workers had NFS quota exceeded on .done file write; manually created). Data: `/proj/cdfuzzing-PG0/distributed/dist6/ar/`
+Plots: `…/dist6/plots/`
+
+**⚠ NFS DATA LOSS — honggfuzzcd (all 3 reps)**: The NFS was at 100% quota when the 3
+honggfuzzcd workers (last to finish due to 44-min openssl build) tried to rsync their results.
+`rsync` errors were silently suppressed (`2>/dev/null`), so only the first 5 of 21 programs
+were saved. honggfuzzcd results are **invalid** and must be re-run.
+Also partially affected: afl-2, aflplusplus-2, honggfuzz-2, aflpluspluscd-2 (likely minor).
+
+Results summary (3 reps, rep2 = SOFT_RESET=1 sweep for AFL-based CD):
+| Pair | Δbugs | Δcov% | Resets | Verdict |
+|---|---|---|---|---|
+| afl → aflcd | **+2** | -0.2% | 6 | ✅ Positive (2nd straight positive result) |
+| fairfuzz → fairfuzzcd | **+1** | -1.4% | 0 | ✅ Improved from dist5 -3 (SOFT_RESET=1 rep2 helped?) |
+| aflplusplus → aflpluspluscd | **-3** | +0.5% | 10 | ❌ Still negative despite SOFT_RESET=1 |
+| honggfuzz → honggfuzzcd | **INVALID** | **INVALID** | 5 | ⚠ Data loss — only 5/21 programs synced |
+
 See DECISIONS.md § dist6 for root cause analysis and rationale.
 
 ---
 
-## distributed (CloudLab): dist5 — all 12 fuzzers, 8h, honggfuzz monitoring-only (IN PROGRESS)
+## distributed (CloudLab): dist5 — 12 fuzzers, 8h, honggfuzz monitoring-only (COMPLETE)
 
 Goal:
 Fix the dist4 use-after-free crash in honggfuzzcd. The selective reset freed dynfile_t entries
@@ -45,7 +62,19 @@ reset for honggfuzzcd entirely (monitoring-only). Hypothesis: 0 resets => 0 cove
 Code change (single line in honggfuzz.c):
 Set `drift_det->reset_on_drift = false` after init. No parameter changes from dist4.
 
-Status: IN PROGRESS — launched 2026-06-19 12:39 CDT, 24 workers, expected completion ~21:25 CDT.
+Status: COMPLETE — launched 2026-06-19 12:39 CDT, finished 2026-06-19 ~21:23 CDT. 24/24 workers done, 0 failed.
+Data: `/proj/cdfuzzing-PG0/distributed/dist5/ar/` | Plots: `…/dist5/plots/`
+
+Results summary (2 reps each):
+| Pair | Δbugs | Δcov% | Resets | Verdict |
+|---|---|---|---|---|
+| afl → aflcd | **+4** | +1.4% | 5 | ✅ First strong positive result |
+| aflfast → aflfastcd | **+5** | -0.4% | 4 | ✅ Consistent positive |
+| moptafl → moptaflcd | **+1** | +3.5% | 29 | ≈ Weak positive, high resets |
+| fairfuzz → fairfuzzcd | **-3** | +2.2% | 1 | ❌ Systematic negative (3rd/4th time) |
+| aflplusplus → aflpluspluscd | **-6** | -2.5% | 12 | ❌ Worst result yet |
+| honggfuzz → honggfuzzcd | **+1** | -2.1% | 0 | ✅ Monitoring-only ≈ 0 confirms UaF was causing the -11 |
+
 See DECISIONS.md § dist5 for root cause analysis and rationale.
 
 ---

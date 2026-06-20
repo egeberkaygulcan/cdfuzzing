@@ -2,14 +2,16 @@
 
 ## Current Goal
 
-Evaluate CD-Fuzzing on the Magma benchmark. **`dist5` is IN PROGRESS** (launched 2026-06-19 12:39 CDT,
-expected completion ~21:25 CDT). **`dist6` is queued** (auto-launches when dist5 finishes via `tmux:dist6_wait`).
+Evaluate CD-Fuzzing on the Magma benchmark. **`dist5` and `dist6` are COMPLETE.**
 
-dist6 introduces:
-1. honggfuzzcd UaF fix (zombie approach — see DECISIONS.md § dist6)
-2. 8 fuzzers × 3 reps = 24 workers (dropped moptafl/aflfast)
-3. Rep 2 parameter sweep: SOFT_RESET=1 for AFL-based CD fuzzers
-See EXPERIMENTS.md § dist6 for full spec.
+**dist6 key results (8 fuzzers × 3 reps, 8h):**
+- afl → aflcd: **+2 bugs** ✅ (2nd positive run)
+- fairfuzz → fairfuzzcd: **+1 bugs** ✅ (improved from -3 in dist5)
+- aflplusplus → aflpluspluscd: **-3 bugs** ❌ (still negative)
+- honggfuzz → honggfuzzcd: **INVALID** ⚠ (NFS data loss — all 3 honggfuzzcd reps failed to sync)
+
+**Next action**: Fix worker-run.sh rsync to exclude honggfuzz corpus files, add NFS pre-check,
+then re-run honggfuzzcd (or a full dist7 with the fixes). See DECISIONS.md § dist6 outcomes.
 
 ## Current State
 
@@ -50,16 +52,17 @@ See EXPERIMENTS.md § dist6 for full spec.
 - Results: moptaflcd -3, aflfastcd +1 (baseline variance), aflpluspluscd +2, aflcd 0, fairfuzzcd -6, **honggfuzzcd crashed (UaF in selective reset)**
 - Root causes documented in DECISIONS.md § dist4 analysis
 
-**`dist5` — IN PROGRESS (honggfuzzcd monitoring-only)**
-- Code change: `honggfuzzcd/newsrc/honggfuzz.c` → `drift_det->reset_on_drift = false` (commit ac9eec7f)
-- Launched 2026-06-19 12:39 CDT, 24 workers, expected ~21:25 CDT
-- See DECISIONS.md § dist5 and EXPERIMENTS.md § dist5 for full spec
+**`dist5` COMPLETE (honggfuzzcd monitoring-only)**
+- 24 workers, launched 2026-06-19 12:39 CDT, finished 2026-06-19 ~21:23 CDT
+- Results: afl +4, aflfast +5, moptafl +1, fairfuzz -3, aflplusplus -6, honggfuzz +1 (0 resets → UaF was causing -11)
+- Data: `/proj/cdfuzzing-PG0/distributed/dist5/ar/` | Plots: `…/dist5/plots/`
 
-**`dist6` — QUEUED (honggfuzz UaF fix, 3 reps, rep2 param sweep)**
-- auto-launches from `tmux:dist6_wait` on head node when dist5 finishes
-- Code changes: `drift-detect.c` zombie fix, `honggfuzz.c` re-enable reset, `worker-run.sh` rep2 sweep (commit a0d951f8)
-- Manifest: drop moptafl/aflfast/moptaflcd/aflfastcd; 8 fuzzers × 3 reps = 24 workers
-- See DECISIONS.md § dist6 and EXPERIMENTS.md § dist6 for full spec
+**`dist6` COMPLETE (honggfuzz UaF fix, 3 reps, rep2 SOFT_RESET=1 sweep)**
+- 24 workers, launched 2026-06-19 ~21:25 CDT, finished 2026-06-20 ~06:52 CDT
+- Results: afl +2 ✅, fairfuzz +1 ✅, aflplusplus -3 ❌, honggfuzz INVALID ⚠ (NFS data loss)
+- ⚠ NFS at 100% capacity: honggfuzzcd rsync failed silently; only 5/21 programs saved
+- Data: `/proj/cdfuzzing-PG0/distributed/dist6/ar/` | Plots: `…/dist6/plots/`
+- See DECISIONS.md § dist6 outcomes for full analysis and fixes needed for dist7
 
 ## Important Files
 

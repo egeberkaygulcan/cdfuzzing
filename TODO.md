@@ -5,16 +5,15 @@
 - [x] **dist5 deployed and launched** (2026-06-19 12:39 CDT, `tmux:dist5`)
 - [x] **dist6 prepared and queued**: honggfuzz UaF fix (zombie approach), 8×3 manifest,
   rep2 SOFT_RESET=1 sweep — commit a0d951f8; auto-launches via `tmux:dist6_wait`
-- [ ] **Analyze dist5 results** when done (~21:25 CDT): check honggfuzzcd Δ ≈ 0 (monitoring-only baseline)
-- [ ] **Analyze dist6 results** when done (~next day): key questions:
-  - honggfuzzcd: does reset fire without crash? Does Δ improve from ~0?
-  - fairfuzzcd rep2 (SOFT_RESET=1): does Δ improve from -6?
-  - aflcd/aflpluspluscd rep2: do det stages post-reset help?
-- [ ] **Push commits to GitHub** — 8+ local commits unpushed (a6b53bb5..a0d951f8).
+- [x] **Analyze dist5 results**: honggfuzzcd Δ=+1 with 0 resets confirms UaF was causing the -11
+- [x] **Analyze dist6 results**: afl +2 ✅, fairfuzz +1 ✅, aflplusplus -3 ❌, honggfuzz INVALID ⚠
+- [ ] **Fix worker-run.sh NFS issues before dist7**:
+  - Add `--exclude '*.honggfuzz.cov'` to rsync (honggfuzz corpus files waste ~8MB/run on NFS)
+  - Add NFS free-space pre-check before captain launch (abort if <10GB free)
+  - Propagate rsync exit code to `copied` counter (currently increments even on quota error)
+- [ ] **Re-run honggfuzz pair (dist7 or honggfuzz-only re-run)** with NFS fixes applied
+- [ ] **Push commits to GitHub** — 8+ local commits unpushed (a6b53bb5..current).
   `git bundle create /tmp/cdfuzzing.bundle HEAD`, scp to local, push.
-- [ ] **Investigate fairfuzzcd `AFL_DRIFT_SOFT_RESET=2`** ✅ (RESOLVED): confirmed SOFT_RESET
-  only fires post-reset (not global). Root cause is likely mode 2 blocking det re-run of
-  rare-branch mutations. rep2 test with SOFT_RESET=1 will confirm in dist6.
 
 ## Medium Priority
 
