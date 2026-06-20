@@ -7,12 +7,17 @@
   rep2 SOFT_RESET=1 sweep — commit a0d951f8; auto-launches via `tmux:dist6_wait`
 - [x] **Analyze dist5 results**: honggfuzzcd Δ=+1 with 0 resets confirms UaF was causing the -11
 - [x] **Analyze dist6 results**: afl +2 ✅, fairfuzz +1 ✅, aflplusplus -3 ❌, honggfuzz INVALID ⚠
-- [ ] **Fix worker-run.sh NFS issues before dist7**:
-  - Add `--exclude '*.honggfuzz.cov'` to rsync (honggfuzz corpus files waste ~8MB/run on NFS)
-  - Add NFS free-space pre-check before captain launch (abort if <10GB free)
-  - Propagate rsync exit code to `copied` counter (currently increments even on quota error)
-- [ ] **Re-run honggfuzz pair (dist7 or honggfuzz-only re-run)** with NFS fixes applied
-- [ ] **Push commits to GitHub** — 8+ local commits unpushed (a6b53bb5..current).
+- [x] **Fix worker-run.sh NFS issues** (commit b7077dd7):
+  - `--exclude '*.honggfuzz.cov'` added to rsync
+  - NFS free-space pre-check added (warn if <10GB)
+  - `copied` counter now only increments on rsync success
+- [x] **dist7 launched** (2026-06-20 15:29 CDT): 6-rep paired-seed sweep for honggfuzz+aflplusplus
+  — `tmux:dist7` fuzzing, `tmux:dist7_followup` auto-analysis, expected done ~20:13 CDT
+- [ ] **Analyze dist7 results** — verdict auto-written to `/proj/cdfuzzing-PG0/distributed/dist7_verdict.txt`
+  - honggfuzzcd: which rep (W/C config) gives best Δbugs?
+  - aflpluspluscd: does any SOFT_RESET=1 config turn positive?
+- [ ] **Launch dist8 if dist7 unsatisfactory** — `bash orchestrate.sh --run-id dist8 --timeout 4h --poll 60`
+- [ ] **Push commits to GitHub** — 10+ local commits unpushed (a6b53bb5..6554d60b).
   `git bundle create /tmp/cdfuzzing.bundle HEAD`, scp to local, push.
 
 ## Medium Priority

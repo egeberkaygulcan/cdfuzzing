@@ -2,16 +2,16 @@
 
 ## Current Goal
 
-Evaluate CD-Fuzzing on the Magma benchmark. **`dist5` and `dist6` are COMPLETE.**
+Evaluate CD-Fuzzing on the Magma benchmark. **`dist7` is IN PROGRESS.**
 
-**dist6 key results (8 fuzzers × 3 reps, 8h):**
-- afl → aflcd: **+2 bugs** ✅ (2nd positive run)
-- fairfuzz → fairfuzzcd: **+1 bugs** ✅ (improved from -3 in dist5)
-- aflplusplus → aflpluspluscd: **-3 bugs** ❌ (still negative)
-- honggfuzz → honggfuzzcd: **INVALID** ⚠ (NFS data loss — all 3 honggfuzzcd reps failed to sync)
+dist7 is a 6-rep paired-seed parameter sweep for honggfuzz/honggfuzzcd and
+aflplusplus/aflpluspluscd. Launched 2026-06-20 15:29 CDT. Expected done ~20:13 CDT.
+Auto-analysis in `tmux:dist7_followup`; verdict at `/proj/cdfuzzing-PG0/distributed/dist7_verdict.txt`.
 
-**Next action**: Fix worker-run.sh rsync to exclude honggfuzz corpus files, add NFS pre-check,
-then re-run honggfuzzcd (or a full dist7 with the fixes). See DECISIONS.md § dist6 outcomes.
+If results are unsatisfactory:
+```bash
+cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist8 --timeout 4h --poll 60
+```
 
 ## Current State
 
@@ -57,12 +57,19 @@ then re-run honggfuzzcd (or a full dist7 with the fixes). See DECISIONS.md § di
 - Results: afl +4, aflfast +5, moptafl +1, fairfuzz -3, aflplusplus -6, honggfuzz +1 (0 resets → UaF was causing -11)
 - Data: `/proj/cdfuzzing-PG0/distributed/dist5/ar/` | Plots: `…/dist5/plots/`
 
+**`dist7` IN PROGRESS — paired-seed 6-rep sweep (honggfuzz + aflplusplus)**
+- 24 workers (6×honggfuzz, 6×honggfuzzcd, 6×aflplusplus, 6×aflpluspluscd)
+- Launched 2026-06-20 15:29 CDT, expected done ~20:13 CDT
+- Timeout: 4h | Seeds: FUZZER_SEED=1000+REP (same for baseline+CD per rep)
+- `tmux:dist7` (orchestrator) + `tmux:dist7_followup` (auto-analysis + verdict)
+- See EXPERIMENTS.md § dist7 and DECISIONS.md § dist7 for full spec
+
 **`dist6` COMPLETE (honggfuzz UaF fix, 3 reps, rep2 SOFT_RESET=1 sweep)**
 - 24 workers, launched 2026-06-19 ~21:25 CDT, finished 2026-06-20 ~06:52 CDT
 - Results: afl +2 ✅, fairfuzz +1 ✅, aflplusplus -3 ❌, honggfuzz INVALID ⚠ (NFS data loss)
 - ⚠ NFS at 100% capacity: honggfuzzcd rsync failed silently; only 5/21 programs saved
 - Data: `/proj/cdfuzzing-PG0/distributed/dist6/ar/` | Plots: `…/dist6/plots/`
-- See DECISIONS.md § dist6 outcomes for full analysis and fixes needed for dist7
+- See DECISIONS.md § dist6 outcomes for full analysis
 
 ## Important Files
 

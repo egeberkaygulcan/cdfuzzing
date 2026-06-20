@@ -2,6 +2,56 @@
 
 ---
 
+## distributed (CloudLab): dist7 — 6 reps × 4 fuzzers, 4h, paired-seed parameter sweep (IN PROGRESS)
+
+Goal:
+Re-run honggfuzz/honggfuzzcd and aflplusplus/aflpluspluscd pairs with three improvements:
+1. **Paired PRNG seed**: both baseline and CD variant in rep N use `FUZZER_SEED=1000+N`, so the
+   only variable is CD on/off + parameter configuration (honggfuzz: `util.c` `FUZZER_SEED` env;
+   AFL++: `-s $FUZZER_SEED` flag).
+2. **6-rep parameter sweep** per CD fuzzer covering the full sensitivity range:
+   - honggfuzzcd: sweep detection window (W=3–10) and consecutive-trigger count (C=2–8)
+   - aflpluspluscd: sweep SOFT_RESET mode (1=det+havoc, 2=havoc-only) and trigger aggressiveness
+3. **NFS rsync fixes**: exclude `*.honggfuzz.cov` corpus files, log errors, fix `copied` counter,
+   add pre-launch free-space check.
+
+| Pair | Reps | Nodes | Seeds |
+|---|---|---|---|
+| honggfuzz / honggfuzzcd | 6 each | .10–.15 / .16–.21 | 1000–1005 (shared per rep) |
+| aflplusplus / aflpluspluscd | 6 each | .22–.27 / .28–.33 | 1000–1005 (shared per rep) |
+
+honggfuzzcd sweep (W=window, C=consecutive, CL=cooldown):
+| Rep | W | C | CL | Profile |
+|---|---|---|---|---|
+| 0 | 5 | 8 | 10 | Conservative |
+| 1 | 5 | 5 | 10 | Default (dist3–dist6) |
+| 2 | 5 | 3 | 10 | Moderate |
+| 3 | 3 | 3 | 10 | Aggressive |
+| 4 | 3 | 2 | 5  | Very aggressive |
+| 5 | 10 | 5 | 15 | Loose window |
+
+aflpluspluscd sweep (SR=SOFT_RESET, C=consecutive, CL=cooldown):
+| Rep | SR | C | CL | Profile |
+|---|---|---|---|---|
+| 0 | 2 | 8 | 25 | Current default |
+| 1 | 1 | 8 | 25 | det+havoc, same trigger |
+| 2 | 1 | 6 | 25 | det+havoc, faster trigger |
+| 3 | 1 | 6 | 10 | det+havoc, fast + short cooldown |
+| 4 | 2 | 6 | 10 | havoc-only, fast + short cooldown |
+| 5 | 1 | 10 | 25 | det+havoc, conservative trigger |
+
+Code changes (commit b7077dd7):
+- `worker-run.sh`: 6-rep case tables, FUZZER_SEED export, rsync fixes, NFS pre-check
+- `cluster/manifest.txt` (NFS, not in repo): 6 reps × 4 fuzzers = 24 workers
+
+Status: IN PROGRESS — launched 2026-06-20 15:29 CDT. Expected completion:
+- aflplusplus workers: ~19:29 CDT (4h flat)
+- honggfuzz workers: ~20:13 CDT (4h + 44min openssl build)
+Auto-analysis via `tmux:dist7_followup` → verdict at `/proj/cdfuzzing-PG0/distributed/dist7_verdict.txt`
+See DECISIONS.md § dist7 for design rationale.
+
+---
+
 ## distributed (CloudLab): dist6 — 8 fuzzers × 3 reps, 8h, honggfuzz UaF fix + rep2 param sweep (COMPLETE)
 
 Goal:

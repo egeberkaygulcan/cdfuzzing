@@ -1,5 +1,39 @@
 # Decisions
 
+## 2026-06-20: dist7 design — paired-seed 6-rep parameter sweep
+
+### Motivation
+dist6 showed positive results for afl (+2) and fairfuzz (+1) but honggfuzzcd data was
+lost (NFS quota) and aflpluspluscd remained negative (-3 for 5th time). Two questions:
+1. What is honggfuzz's actual Δ with the UaF fix and reset enabled?
+2. Which CD parameter configuration gives the best Δ for each fuzzer?
+
+### Paired-seed design
+Previous experiments had no seed control: honggfuzz_N and honggfuzzcd_N started with
+different PRNG states, so differences could be variance rather than CD effect. With
+`FUZZER_SEED=1000+N` for both baseline and CD variant in the same rep, the only variable
+is whether CD is active (and which parameter config). This reduces noise substantially.
+
+### Parameter sweep rationale
+**honggfuzzcd**: The key question is detection sensitivity. Too conservative (large C) →
+  few resets, CD effect minimal. Too aggressive (small C) → frequent resets disrupt the
+  corpus before the fuzzer has exploited it. Sweep covers C=2–8 and W=3–10.
+
+**aflpluspluscd**: The key question is reset mode. SOFT_RESET=2 (havoc-only) keeps
+  `passed_det=1` so AFL++'s deterministic stages never re-run post-reset. SOFT_RESET=1
+  (det+havoc) clears `passed_det` on favored entries, re-running bit-flips/arithmetic.
+  Hypothesis: SOFT_RESET=1 should allow AFL++ to exploit post-reset coverage better.
+  Secondary: CONSECUTIVE sweep (C=6–10) to find the right trigger threshold.
+
+### NFS rsync fixes
+Root cause of dist6 honggfuzzcd data loss: `*.honggfuzz.cov` corpus files (2000+ per
+honggfuzz run × 4KB block allocation × 9 programs × 6 reps × NFS latency = GBs of
+small-file overhead). Fix: `--exclude '*.honggfuzz.cov'` in rsync. Also: rsync errors
+no longer silently discarded, `copied` counter now only increments on success, pre-launch
+free-space check warns if <10GB available.
+
+---
+
 ## 2026-06-19: dist6 proposed changes — honggfuzz UaF fix + rep2 param sweep
 
 ### honggfuzzcd: proper UaF fix (zombie approach)
