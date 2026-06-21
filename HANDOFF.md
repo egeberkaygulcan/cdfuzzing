@@ -9,8 +9,8 @@ dist8 key findings:
 2. **honggfuzz critical code bug**: `drift_init()` never reads `AFL_DRIFT_CONSECUTIVE` or `AFL_DRIFT_COOLDOWN`. All C/CL sweeps in dist3–dist8 were no-ops. Only WINDOW was ever effective for honggfuzz.
 
 Next steps:
-1. Fix `honggfuzzcd/newsrc/drift-detect.c`: add getenv reads + consecutive/cooldown gate in `drift_check_value()`
-2. Launch dist9: honggfuzz with fixed C/CL (W=5, C=5/10/15) + 4 confirmations of aflpluspluscd SR=1,C=12,CL=25
+1. **smoke9**: verify the drift-detect.c fix — ssh to 192.168.1.16, `git pull`, run honggfuzzcd sqlite3 20min with C=2; check `drift_log.csv` shows consecutive_drifts gate working
+2. **dist9**: honggfuzz C/CL sweep (C=2/3/5/8/10/3, W=5, now working) + 4× confirm aflpluspluscd SR=1,C=12,CL=25
 
 ## Current State
 

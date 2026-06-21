@@ -81,6 +81,12 @@ drift_detector_t* drift_init(const char* output_dir) {
     env_val = getenv("AFL_DRIFT_THRESHOLD");
     dd->drift_threshold = env_val ? atof(env_val) : 0.05;
 
+    env_val = getenv("AFL_DRIFT_CONSECUTIVE");
+    dd->consecutive_threshold = env_val ? (uint32_t)atoi(env_val) : 5;
+
+    env_val = getenv("AFL_DRIFT_COOLDOWN");
+    dd->cooldown_threshold = env_val ? (uint32_t)atoi(env_val) : 10;
+
     dd->reset_on_drift = true;   /* Always on */
 
     /* Allocate history buffers */
@@ -134,8 +140,10 @@ drift_detector_t* drift_init(const char* output_dir) {
     }
 
     LOG_I("Drift detection enabled:");
-    LOG_I("  Value drift: window=%u, threshold=%.3f, reset=%s",
-          dd->window_size, dd->drift_threshold, dd->reset_on_drift ? "ON" : "OFF");
+    LOG_I("  Value drift: window=%u, threshold=%.3f, consecutive=%u, cooldown=%u, reset=%s",
+          dd->window_size, dd->drift_threshold,
+          dd->consecutive_threshold, dd->cooldown_threshold,
+          dd->reset_on_drift ? "ON" : "OFF");
 
     return dd;
 }
@@ -207,6 +215,14 @@ bool drift_check_value(drift_detector_t* dd, uint64_t current_iter) {
     if (!dd) return false;
     if (dd->history_len < dd->window_size * 2) return false;
 
+    /* --- Cooldown gate ---
+     * After each reset, skip this many time-gate windows before checking again.
+     * This mirrors AFL_DRIFT_COOLDOWN semantics in the AFL-based CD fuzzers. */
+    if (dd->cooldown_remaining > 0) {
+        dd->cooldown_remaining--;
+        return false;
+    }
+
     uint32_t current_start  = dd->history_len - dd->window_size;
     uint32_t previous_start = current_start - dd->window_size;
     uint32_t current_end    = dd->history_len - 1;
@@ -235,19 +251,33 @@ bool drift_check_value(drift_detector_t* dd, uint64_t current_iter) {
     if (p_value < dd->drift_threshold) {
         dd->drift_count++;
 
-        LOG_I("VALUE DRIFT detected at iter %" PRIu64 " | p-value: %.4f",
-              current_iter, p_value);
+        LOG_I("VALUE DRIFT detected at iter %" PRIu64 " | p-value: %.4f | consecutive: %u/%u",
+              current_iter, p_value, dd->consecutive_drifts + 1, dd->consecutive_threshold);
 
         bool is_increasing = drift_is_coverage_rate_increasing(dd);
         LOG_I("  Coverage rate increasing: %s", is_increasing ? "YES" : "NO");
 
         if (dd->reset_on_drift && !is_increasing) {
-            dd->reset_count++;
-            LOG_W("  CORPUS RESET - Coverage rate not increasing");
-            return true;  /* Signal reset needed */
-        } else if (dd->reset_on_drift && is_increasing) {
+            dd->consecutive_drifts++;
+            if (dd->consecutive_drifts >= dd->consecutive_threshold) {
+                /* Threshold reached — fire reset */
+                dd->consecutive_drifts = 0;
+                dd->cooldown_remaining = dd->cooldown_threshold;
+                dd->reset_count++;
+                LOG_W("  CORPUS RESET - %u consecutive drifts reached", dd->consecutive_threshold);
+                return true;
+            } else {
+                LOG_I("  NO RESET yet - %u/%u consecutive drifts",
+                      dd->consecutive_drifts, dd->consecutive_threshold);
+            }
+        } else {
+            /* Coverage is increasing — not a stagnation event, reset counter */
+            dd->consecutive_drifts = 0;
             LOG_I("  NO RESET - Coverage rate is increasing");
         }
+    } else {
+        /* No drift this window — reset consecutive counter */
+        dd->consecutive_drifts = 0;
     }
 
     return false;

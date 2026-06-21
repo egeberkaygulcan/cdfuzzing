@@ -18,8 +18,13 @@
   - aflpluspluscd: SOFT_RESET=1 is the key variable; best config SR=1,C=10,CL=25 → **+11 bugs**
   - See DECISIONS.md § dist7 outcomes for full interpretation
 - [x] **dist8 COMPLETE** (2026-06-21 13:14 CDT): aflpluspluscd confirmed +1.8 avg (C=10); C=12 gave +8 (best); honggfuzz C/CL bug discovered
-- [ ] **Fix honggfuzz drift-detect.c**: add `getenv("AFL_DRIFT_CONSECUTIVE")` and `getenv("AFL_DRIFT_COOLDOWN")` in `drift_init()`; implement consecutive/cooldown gate in `drift_check_value()` (mirrors AFL CD logic)
-- [ ] **Launch dist9** — honggfuzz-only with fixed C/CL reading; sweep C=5,10,15 properly this time. Also run 4 reps of aflpluspluscd SR=1,C=12,CL=25 to confirm new best.
+- [x] **Fix honggfuzz drift-detect.c**: `drift_init()` now reads `AFL_DRIFT_CONSECUTIVE`/`AFL_DRIFT_COOLDOWN`; `drift_check_value()` enforces consecutive/cooldown gate
+- [ ] **Run smoke9** — verify fix: honggfuzzcd sqlite3, 20min, C=2 CL=3; check `drift_log.csv` shows consecutive_drifts counting to threshold before reset fires
+  ```bash
+  ssh 192.168.1.16 "cd /local/repository && git pull && bash cloudlab/worker-run.sh --fuzzer honggfuzzcd --rep 0 --run-id smoke9 --timeout 20m --targets sqlite3"
+  ```
+- [ ] **Launch dist9** — honggfuzz C=2–10 sweep (C/CL now working) + AFL++ 4× confirm SR=1,C=12,CL=25, 8h
+  `cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist9 --timeout 8h --poll 60`
 - [ ] **Fix dist7_followup.sh verdict logic** — should analyze per-rep, not aggregated total
 
 ## Medium Priority

@@ -21,10 +21,12 @@
 typedef struct {
 
     /* Configuration */
-    uint32_t window_size;          /* Window for value drift (default: 100) */
-    double   drift_threshold;      /* P-value threshold (default: 0.05) */
-    bool     reset_on_drift;       /* Reset corpus on VALUE drift only */
-    uint32_t metrics_window_size;  /* Window for derivative metrics (default: 100) */
+    uint32_t window_size;           /* Window for value drift (default: 100) */
+    double   drift_threshold;       /* P-value threshold (default: 0.05) */
+    bool     reset_on_drift;        /* Reset corpus on VALUE drift only */
+    uint32_t metrics_window_size;   /* Window for derivative metrics (default: 100) */
+    uint32_t consecutive_threshold; /* Consecutive drift windows required before reset (AFL_DRIFT_CONSECUTIVE, default: 5) */
+    uint32_t cooldown_threshold;    /* Windows to skip after a reset (AFL_DRIFT_COOLDOWN, default: 10) */
 
     /* History tracking */
     uint64_t* value_history;        /* queued_paths over time */

@@ -2,6 +2,58 @@
 
 ---
 
+## distributed (CloudLab): dist9 — 6 reps × 4 fuzzers, 8h, first real honggfuzz C/CL sweep + AFL++ C=12 confirmation (PENDING)
+
+Goal:
+1. **First real honggfuzz C/CL sweep** — fix applied to `drift-detect.c:drift_init()` now reads
+   `AFL_DRIFT_CONSECUTIVE` and `AFL_DRIFT_COOLDOWN`. `DRIFT_SAMPLE_SEC=60` means C=N is N
+   consecutive **minutes** of stagnation. Sweep C=2–10 to find if any rate helps at 8h.
+2. **Confirm aflpluspluscd SR=1, C=12, CL=25** (dist8 rep5: +8 bugs, 9 resets) with 4 pure reps
+   + 2 boundary probes (C=14, C=10).
+
+Design: same paired-seed setup (FUZZER_SEED=1000+N). Docker images rebuild on each worker
+from updated `/local/repository/`, picking up the drift-detect.c fix.
+
+honggfuzzcd sweep (all W=5; C/CL now actually enforced):
+| Rep | W | C  | CL | Expected resets/prog/8h | Profile |
+|-----|---|----|----|-------------------------|---------|
+| 0 | 5 | 2  | 5  | ~0.5–1.0 | Aggressive |
+| 1 | 5 | 3  | 10 | ~0.3–0.7 | Moderate |
+| 2 | 5 | 5  | 15 | ~0.1–0.3 | Conservative |
+| 3 | 5 | 8  | 25 | ~0–0.1   | Very conservative |
+| 4 | 5 | 10 | 25 | ~0       | Near-zero (calibration) |
+| 5 | 5 | 3  | 3  | ~0.5–1.0 | Moderate C + short CL |
+
+aflpluspluscd sweep (all SR=1):
+| Rep | SR | C  | CL | Profile |
+|-----|----|----|-----|---------|
+| 0 | 1 | 12 | 25 | Confirm new best (rep A) |
+| 1 | 1 | 12 | 25 | Confirm new best (rep B) |
+| 2 | 1 | 12 | 25 | Confirm new best (rep C) |
+| 3 | 1 | 12 | 25 | Confirm new best (rep D) |
+| 4 | 1 | 14 | 25 | Right boundary push |
+| 5 | 1 | 10 | 25 | Compare vs dist8 C=10 |
+
+Code changes (this commit):
+- `honggfuzzcd/newsrc/drift-detect.h`: add `consecutive_threshold`, `cooldown_threshold` fields
+- `honggfuzzcd/newsrc/drift-detect.c`: read `AFL_DRIFT_CONSECUTIVE`/`AFL_DRIFT_COOLDOWN` in
+  `drift_init()`; implement consecutive/cooldown gate in `drift_check_value()`
+- `cloudlab/worker-run.sh`: updated case tables for dist9; honggfuzz C=2–10 sweep; AFL++ C=12×4
+
+Smoke test (smoke9) run before dist9 to verify the fix:
+- Target: honggfuzz + honggfuzzcd, sqlite3 only, 20min, C=2 CL=3 (rep 0 config)
+- Pass criterion: `drift_log.csv` shows `consecutive_drifts` counting 1→2 before reset fires,
+  then `cooldown_remaining` counting 3→0 post-reset.
+
+Launch command (after smoke9 passes):
+```bash
+cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist9 --timeout 8h --poll 60
+```
+
+Status: **PENDING**
+
+---
+
 ## distributed (CloudLab): dist8 — 6 reps × 4 fuzzers, 8h, AFL++ confirmation + honggfuzz ultra-conservative sweep (PENDING)
 
 Goal:
