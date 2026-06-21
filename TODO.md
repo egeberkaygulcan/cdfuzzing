@@ -17,8 +17,8 @@
   - honggfuzzcd: no config effective — resets consistently hurt; +2 rep fired 0 resets (noise)
   - aflpluspluscd: SOFT_RESET=1 is the key variable; best config SR=1,C=10,CL=25 → **+11 bugs**
   - See DECISIONS.md § dist7 outcomes for full interpretation
-- [ ] **Launch dist8** — confirm aflpluspluscd SR=1,C=10,CL=25 with ≥6 reps, 6h timeout
-  `cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist8 --timeout 6h --poll 60`
+- [ ] **Launch dist8** — confirm aflpluspluscd SR=1,C=10,CL=25 with 4 reps + honggfuzz ultra-conservative sweep (C=10–20), 8h
+  `cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist8 --timeout 8h --poll 60`
 - [ ] **Fix dist7_followup.sh verdict logic** — should analyze per-rep, not aggregated total
 - [ ] **Push commits to GitHub** — 11+ local commits unpushed (a6b53bb5..e4f0f4a0).
   `git bundle create /tmp/cdfuzzing.bundle HEAD`, scp to local, push.

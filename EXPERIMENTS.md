@@ -2,6 +2,58 @@
 
 ---
 
+## distributed (CloudLab): dist8 — 6 reps × 4 fuzzers, 8h, AFL++ confirmation + honggfuzz ultra-conservative sweep (PENDING)
+
+Goal:
+1. **Statistically confirm** aflpluspluscd SR=1, C=10, CL=25 (dist7 best: +11 bugs) with 4 pure
+   replications → mean±stdev suitable for the paper. 2 boundary probes (C=8, C=12) check whether
+   C=10 is a real sweet spot or variance.
+2. **Test ultra-conservative honggfuzzcd parameters** (C=10–20, never tried in dist7) at 8h.
+   Hypothesis: if C≥10 restricts resets to 1–5 per run and the cooldown is long enough to allow
+   corpus recovery, honggfuzz may benefit from occasional resets at longer timescales.
+   Rep 5 is a control (= dist7 rep1, known: −6, 23 resets at 4h) to verify calibration.
+
+Design: same paired-seed setup as dist7 (FUZZER_SEED=1000+N for both baseline and CD in rep N).
+No code changes — same zombie UaF fix, same SR=1 path in AFL++.
+
+| Pair | Reps | Nodes | Seeds |
+|---|---|---|---|
+| honggfuzz / honggfuzzcd | 6 each | same layout as dist7 | 1000–1005 (shared per rep) |
+| aflplusplus / aflpluspluscd | 6 each | same layout as dist7 | 1000–1005 (shared per rep) |
+
+honggfuzzcd sweep (W=window, C=consecutive, CL=cooldown):
+| Rep | W | C  | CL | Profile |
+|-----|---|----|----|---------|
+| 0 | 5  | 10 | 25 | Very conservative (first time in this regime) |
+| 1 | 5  | 15 | 30 | Ultra-conservative |
+| 2 | 5  | 20 | 50 | Near-monitoring (~1–3 resets expected) |
+| 3 | 10 | 10 | 25 | Wide window, conservative |
+| 4 | 10 | 15 | 50 | Wide window + extreme cooldown |
+| 5 | 5  | 5  | 10 | **Control** (= dist7 rep1; known −6 Δbugs, 23 resets at 4h) |
+
+aflpluspluscd sweep (SR=SOFT_RESET, C=consecutive, CL=cooldown):
+| Rep | SR | C  | CL | Profile |
+|-----|----|----|-----|---------|
+| 0 | 1 | 10 | 25 | Confirm best (rep A) |
+| 1 | 1 | 10 | 25 | Confirm best (rep B) |
+| 2 | 1 | 10 | 25 | Confirm best (rep C) |
+| 3 | 1 | 10 | 25 | Confirm best (rep D) |
+| 4 | 1 | 8  | 25 | Left boundary (dist7 rep1 C=8 was +2) |
+| 5 | 1 | 12 | 25 | Right boundary (more conservative) |
+
+Code changes (this commit):
+- `cloudlab/worker-run.sh`: updated honggfuzzcd and aflpluspluscd case tables; comment block updated
+- `cluster/manifest.txt` (NFS, not in repo): same 6 reps × 4 fuzzers = 24 workers as dist7
+
+Launch command:
+```bash
+cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist8 --timeout 8h --poll 60
+```
+
+Status: **PENDING**
+
+---
+
 ## distributed (CloudLab): dist7 — 6 reps × 4 fuzzers, 4h, paired-seed parameter sweep (COMPLETE)
 
 Goal:

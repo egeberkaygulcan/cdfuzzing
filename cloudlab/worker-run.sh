@@ -75,31 +75,36 @@ FUZZER_SEED=$(( 1000 + REP ))
 
 # --- CD parameter sweep (6 reps × 2 pairs: honggfuzz and aflplusplus) ----------
 #
-# honggfuzzcd sweep — vary detection window size and consecutive-trigger count.
-#   WINDOW: samples per KS half-window (each ~60 s); CONSECUTIVE: windows in a
-#   row that must all show p < THRESHOLD before a reset fires.
+# dist8: 8h, ultra-conservative honggfuzz sweep + AFL++ confirmation
 #
-#  rep | WINDOW | CONSEC | COOLDOWN | profile
-#  ----+--------+--------+----------+---------
-#   0  |   5    |   8    |   10     | conservative  (slow to trigger)
-#   1  |   5    |   5    |   10     | default       (dist3–dist6 baseline)
-#   2  |   5    |   3    |   10     | moderate
-#   3  |   3    |   3    |   10     | aggressive    (fast window)
-#   4  |   3    |   2    |    5     | very aggressive + short cooldown
-#   5  |  10    |   5    |   15     | loose window  (less sensitive)
+# honggfuzzcd sweep — test whether very rare resets (1–3 per 8h) can help.
+#   dist7 showed C≤8 always fires enough resets to hurt; C=2–3 with 0 resets
+#   is pure noise.  This sweep tests C=10–20 (never tried) plus long cooldowns
+#   to space resets far apart.  Rep 5 is a control (= dist7 rep1) to verify
+#   the known-negative result holds at 8h.
 #
-# aflpluspluscd sweep — vary SOFT_RESET mode and trigger aggressiveness.
-#   SOFT_RESET=1: det+havoc (re-runs deterministic stages post-reset)
-#   SOFT_RESET=2: havoc-only (keeps passed_det=1; no det re-run)
+#  rep | WINDOW | CONSEC | COOLDOWN | expected resets (8h) | profile
+#  ----+--------+--------+----------+----------------------+---------
+#   0  |   5    |   10   |   25     | ~5–10                | very conservative
+#   1  |   5    |   15   |   30     | ~2–5                 | ultra-conservative
+#   2  |   5    |   20   |   50     | ~1–3                 | near-monitoring
+#   3  |  10    |   10   |   25     | ~3–8                 | wide window, conservative
+#   4  |  10    |   15   |   50     | ~1–3                 | wide window + extreme cooldown
+#   5  |   5    |    5   |   10     | ~40–60               | control (= dist7 rep1; known -6, 23R@4h)
+#
+# aflpluspluscd — confirm SR=1,C=10,CL=25 as best config (dist7 Rep5: +11 bugs).
+#   All reps use SR=1 (det+havoc confirmed essential in dist7).
+#   Reps 0–3: pure replication of best config → mean±stdev for the paper.
+#   Reps 4–5: boundary probes to verify C=10 is a real sweet spot.
 #
 #  rep | SR | CONSEC | BOOST | COOLDOWN | profile
 #  ----+----+--------+-------+----------+---------
-#   0  |  2 |   8    |   2   |   25     | current default
-#   1  |  1 |   8    |   1   |   25     | det+havoc, same trigger
-#   2  |  1 |   6    |   1   |   25     | det+havoc, faster trigger
-#   3  |  1 |   6    |   1   |   10     | det+havoc, fast + short cooldown
-#   4  |  2 |   6    |   2   |   10     | havoc-only, fast + short cooldown
-#   5  |  1 |  10    |   1   |   25     | det+havoc, conservative trigger
+#   0  |  1 |   10   |   1   |   25     | confirm best (rep A)
+#   1  |  1 |   10   |   1   |   25     | confirm best (rep B)
+#   2  |  1 |   10   |   1   |   25     | confirm best (rep C)
+#   3  |  1 |   10   |   1   |   25     | confirm best (rep D)
+#   4  |  1 |    8   |   1   |   25     | left boundary  (dist7 rep1 was +2)
+#   5  |  1 |   12   |   1   |   25     | right boundary (more conservative)
 
 CD_CONSECUTIVE=5
 CD_STAGNATION=0.5
@@ -111,22 +116,22 @@ CD_HAVOC_BOOST=2
 case "$FUZZER" in
     honggfuzzcd)
         case "$REP" in
-            0) CD_WINDOW=5;  CD_CONSECUTIVE=8; CD_COOLDOWN=10 ;;
-            1) CD_WINDOW=5;  CD_CONSECUTIVE=5; CD_COOLDOWN=10 ;;
-            2) CD_WINDOW=5;  CD_CONSECUTIVE=3; CD_COOLDOWN=10 ;;
-            3) CD_WINDOW=3;  CD_CONSECUTIVE=3; CD_COOLDOWN=10 ;;
-            4) CD_WINDOW=3;  CD_CONSECUTIVE=2; CD_COOLDOWN=5  ;;
-            5) CD_WINDOW=10; CD_CONSECUTIVE=5; CD_COOLDOWN=15 ;;
+            0) CD_WINDOW=5;  CD_CONSECUTIVE=10; CD_COOLDOWN=25 ;;
+            1) CD_WINDOW=5;  CD_CONSECUTIVE=15; CD_COOLDOWN=30 ;;
+            2) CD_WINDOW=5;  CD_CONSECUTIVE=20; CD_COOLDOWN=50 ;;
+            3) CD_WINDOW=10; CD_CONSECUTIVE=10; CD_COOLDOWN=25 ;;
+            4) CD_WINDOW=10; CD_CONSECUTIVE=15; CD_COOLDOWN=50 ;;
+            5) CD_WINDOW=5;  CD_CONSECUTIVE=5;  CD_COOLDOWN=10 ;;  # control = dist7 rep1
         esac
         ;;
     aflpluspluscd)
         case "$REP" in
-            0) CD_SOFT_RESET=2; CD_CONSECUTIVE=8;  CD_HAVOC_BOOST=2; CD_COOLDOWN=25 ;;
-            1) CD_SOFT_RESET=1; CD_CONSECUTIVE=8;  CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;
-            2) CD_SOFT_RESET=1; CD_CONSECUTIVE=6;  CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;
-            3) CD_SOFT_RESET=1; CD_CONSECUTIVE=6;  CD_HAVOC_BOOST=1; CD_COOLDOWN=10 ;;
-            4) CD_SOFT_RESET=2; CD_CONSECUTIVE=6;  CD_HAVOC_BOOST=2; CD_COOLDOWN=10 ;;
-            5) CD_SOFT_RESET=1; CD_CONSECUTIVE=10; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;
+            0) CD_SOFT_RESET=1; CD_CONSECUTIVE=10; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;  # confirm best
+            1) CD_SOFT_RESET=1; CD_CONSECUTIVE=10; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;  # confirm best
+            2) CD_SOFT_RESET=1; CD_CONSECUTIVE=10; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;  # confirm best
+            3) CD_SOFT_RESET=1; CD_CONSECUTIVE=10; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;  # confirm best
+            4) CD_SOFT_RESET=1; CD_CONSECUTIVE=8;  CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;  # left boundary
+            5) CD_SOFT_RESET=1; CD_CONSECUTIVE=12; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;  # right boundary
         esac
         ;;
 esac
