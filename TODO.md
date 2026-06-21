@@ -17,11 +17,10 @@
   - honggfuzzcd: no config effective — resets consistently hurt; +2 rep fired 0 resets (noise)
   - aflpluspluscd: SOFT_RESET=1 is the key variable; best config SR=1,C=10,CL=25 → **+11 bugs**
   - See DECISIONS.md § dist7 outcomes for full interpretation
-- [ ] **Launch dist8** — confirm aflpluspluscd SR=1,C=10,CL=25 with 4 reps + honggfuzz ultra-conservative sweep (C=10–20), 8h
-  `cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist8 --timeout 8h --poll 60`
+- [x] **dist8 COMPLETE** (2026-06-21 13:14 CDT): aflpluspluscd confirmed +1.8 avg (C=10); C=12 gave +8 (best); honggfuzz C/CL bug discovered
+- [ ] **Fix honggfuzz drift-detect.c**: add `getenv("AFL_DRIFT_CONSECUTIVE")` and `getenv("AFL_DRIFT_COOLDOWN")` in `drift_init()`; implement consecutive/cooldown gate in `drift_check_value()` (mirrors AFL CD logic)
+- [ ] **Launch dist9** — honggfuzz-only with fixed C/CL reading; sweep C=5,10,15 properly this time. Also run 4 reps of aflpluspluscd SR=1,C=12,CL=25 to confirm new best.
 - [ ] **Fix dist7_followup.sh verdict logic** — should analyze per-rep, not aggregated total
-- [ ] **Push commits to GitHub** — 11+ local commits unpushed (a6b53bb5..e4f0f4a0).
-  `git bundle create /tmp/cdfuzzing.bundle HEAD`, scp to local, push.
 
 ## Medium Priority
 

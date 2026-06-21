@@ -2,16 +2,15 @@
 
 ## Current Goal
 
-Evaluate CD-Fuzzing on the Magma benchmark. **`dist7` is COMPLETE. Next: dist8 to confirm aflpluspluscd SR=1, C=10, CL=25.**
+Evaluate CD-Fuzzing on the Magma benchmark. **`dist8` is COMPLETE. Next: fix honggfuzz C/CL bug → dist9.**
 
-dist7 key finding: SOFT_RESET=1 is essential for AFL++CD — best config (SR=1, C=10, CL=25)
-gave +11 bugs vs baseline across the paired run. honggfuzzcd is structurally ineffective
-(resets hurt; only positive rep fired 0 resets = noise).
+dist8 key findings:
+1. **aflpluspluscd SR=1, C=10, CL=25 confirmed positive**: mean +1.8 bugs across 4 reps (range −1 to +4). C=12 boundary gave best single result (+8, 9 resets). **Recommended final config: SR=1, C=12, CL=25.**
+2. **honggfuzz critical code bug**: `drift_init()` never reads `AFL_DRIFT_CONSECUTIVE` or `AFL_DRIFT_COOLDOWN`. All C/CL sweeps in dist3–dist8 were no-ops. Only WINDOW was ever effective for honggfuzz.
 
-Launch dist8 to confirm with more reps:
-```bash
-cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist8 --timeout 6h --poll 60
-```
+Next steps:
+1. Fix `honggfuzzcd/newsrc/drift-detect.c`: add getenv reads + consecutive/cooldown gate in `drift_check_value()`
+2. Launch dist9: honggfuzz with fixed C/CL (W=5, C=5/10/15) + 4 confirmations of aflpluspluscd SR=1,C=12,CL=25
 
 ## Current State
 

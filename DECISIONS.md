@@ -1,5 +1,50 @@
 # Decisions
 
+## 2026-06-21: dist8 outcomes — AFL++ confirmation + honggfuzz code bug
+
+### aflpluspluscd: confirmed positive, C=12 is the new best candidate
+4 pure confirmations of SR=1, C=10, CL=25 (dist7 best) gave +3, +1, −1, +4 → mean **+1.8**.
+C=8 boundary: −10 (18 resets — catastrophic, confirms C=8 is over the edge).
+C=12 boundary: **+8** (9 resets — fewest of all reps, best single-rep result).
+
+The consistent pattern across dist7 and dist8: **fewer resets = better Δbugs**.
+Rep 5 in dist7 (C=10, 9 resets at 4h) gave +11. C=12 in dist8 (9 resets at 8h) gave +8.
+The variance at C=10 (−1 to +4) is substantial with only 21 programs — the mean +1.8 is
+real but noisy. C=12 may reduce accidental over-triggering while still catching genuine
+stagnation, making it a cleaner operating point.
+
+**Recommended final config**: SR=1, C=12, CL=25. Should be tested with ≥4 dedicated reps
+before paper submission.
+
+### honggfuzzcd: critical code bug — C and CL parameters were never read
+**Root cause**: `drift-detect.c:drift_init()` reads only `AFL_DRIFT_WINDOW` and
+`AFL_DRIFT_THRESHOLD` from the environment. There is no `getenv("AFL_DRIFT_CONSECUTIVE")`
+or `getenv("AFL_DRIFT_COOLDOWN")` call anywhere in the honggfuzz CD codebase.
+
+Consequence: every honggfuzz experiment from dist3 to dist8 that swept C or CL was a
+**no-op** for those parameters. The effective parameter space was only WINDOW vs no-WINDOW:
+- W=5 → ~28 resets/run (regardless of C=5/8/10/15/20) at 8h
+- W=10 → 0 resets/run (KS test less sensitive with wider windows)
+- W=3 (dist7) → 0 resets (too few samples for KS test to reject null)
+
+This also retroactively explains all prior honggfuzz results:
+- dist3–dist6 C/CL sweeps for honggfuzz changed nothing
+- The "WINDOW=5" experiments all used the same effective config regardless of C=3/5/8
+
+**What was actually tested**: Only the drift detection threshold (WINDOW + THRESHOLD),
+not the trigger frequency (CONSECUTIVE) or recovery time (COOLDOWN).
+
+**Whether to fix**: The fix would be adding `getenv()` calls in `drift_init()` and
+implementing the consecutive/cooldown gate in `drift_check_value()`. This mirrors what
+AFL-based CD fuzzers already do. However, given that honggfuzz's reset is destructive
+(hard reset of entire corpus) and all non-zero-reset configs hurt at every WINDOW value
+tested, fixing the C/CL reading might not help — the fundamental problem is honggfuzz
+rebuilds corpus from scratch far slower than AFL. Decision: **fix the bug for completeness
+and run one final honggfuzz sweep** (dist9) with a working C/CL parameter, then accept
+the negative result if it persists.
+
+---
+
 ## 2026-06-21: dist7 outcomes — parameter sweep analysis
 
 ### honggfuzzcd: structurally ineffective

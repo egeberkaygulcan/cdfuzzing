@@ -50,7 +50,44 @@ Launch command:
 cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist8 --timeout 8h --poll 60
 ```
 
-Status: **PENDING**
+Status: **COMPLETE** — launched 2026-06-21 05:03 CDT, all 24/24 workers done by 13:14 CDT.
+Data: `/proj/cdfuzzing-PG0/distributed/dist8/ar/` | Plots: `…/dist8/plots/`
+See DECISIONS.md § dist8 outcomes for full analysis.
+
+**⚠ CODE BUG DISCOVERED**: `honggfuzzcd/newsrc/drift-detect.c:drift_init()` never reads
+`AFL_DRIFT_CONSECUTIVE` or `AFL_DRIFT_COOLDOWN` from the environment. Only `AFL_DRIFT_WINDOW`
+and `AFL_DRIFT_THRESHOLD` are respected. Every C and CL sweep in dist3–dist8 was a no-op for
+honggfuzz — only the WINDOW parameter ever changed behavior.
+
+**aflplusplus → aflpluspluscd (per-rep results):**
+
+| Rep | base | cd | Δbugs | resets | config |
+|-----|------|----|-------|--------|--------|
+| 0 | 36 | 39 | **+3** | 15 | SR=1, C=10, CL=25 (confirm A) |
+| 1 | 38 | 39 | **+1** | 11 | SR=1, C=10, CL=25 (confirm B) |
+| 2 | 37 | 36 | **-1** | 20 | SR=1, C=10, CL=25 (confirm C) |
+| 3 | 30 | 34 | **+4** | 24 | SR=1, C=10, CL=25 (confirm D) |
+| 4 | 37 | 27 | **-10** | 18 | SR=1, C=8, CL=25 (left boundary) |
+| 5 | 28 | 36 | **+8** | 9 | SR=1, C=12, CL=25 (right boundary) |
+
+Confirmation reps 0–3 (SR=1, C=10, CL=25): mean **+1.8**, range −1 to +4.
+C=8 catastrophic (−10, 18 resets). C=12 best single result (+8, 9 resets — fewest resets).
+Pattern: fewer resets → better Δbugs. C=12 is a strong candidate for the final config.
+
+**honggfuzz → honggfuzzcd (per-rep results):**
+
+| Rep | base | cd | Δbugs | resets | config |
+|-----|------|----|-------|--------|--------|
+| 0 | 38 | 20 | **-18** | 28 | W=5, C=10, CL=25 (C/CL **ignored** by code) |
+| 1 | 32 | 21 | **-11** | 28 | W=5, C=15, CL=30 (C/CL **ignored** by code) |
+| 2 | 33 | 24 | **-9** | 28 | W=5, C=20, CL=50 (C/CL **ignored** by code) |
+| 3 | 31 | 33 | **+2** | 0 | W=10, C=10, CL=25 (wider window → 0 resets, noise) |
+| 4 | 33 | 26 | **-7** | 0 | W=10, C=15, CL=50 (0 resets, noise) |
+| 5 | 28 | 16 | **-12** | 70 | W=5, C=5, CL=10 (control; −12 vs dist7 rep1 −6) |
+
+All W=5 reps fired exactly 28 resets regardless of C (10/15/20) — confirms C param is ignored.
+W=10 reps fired 0 resets but show noise-level Δbugs (+2, −7), no positive signal.
+Control (W=5, C=5) fired 70 resets and −12: consistent with dist7 rep1 pattern at 8h.
 
 ---
 
