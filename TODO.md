@@ -2,29 +2,43 @@
 
 ## High Priority
 
-- [ ] **Monitor dist1** — expected finish ~06:00 CDT 2026-06-18. Check:
-  `tail -f /proj/cdfuzzing-PG0/distributed/dist1_orch.log`
-  or `tmux attach -t dist1` on head. Extend CloudLab lease if needed before campaign ends.
-- [ ] **Review dist1 analysis output** at `/proj/cdfuzzing-PG0/distributed/dist1/plots/`.
-  If auto-analysis fails after all workers done, run manually:
-  `CDFUZZ_BASE=/proj/cdfuzzing-PG0/distributed/dist1 CDFUZZ_OUTDIR=.../dist1/plots python3 /local/repository/plot_seed4.py`
-- [ ] **Commit the 6 fixed files** in `/local/repository` (branch main @ c85513f) before the
-  CloudLab lease expires — CLOUDLAB.md, profile.py, cloudlab/{setup-node,worker-run,orchestrate,merge-results}.sh.
-  Without this commit, a fresh re-instantiation gets the unfixed profile.py boot command.
-- [ ] **Interpret A/B results from dist1**: compare rep 0 vs rep 1 per CD fuzzer to choose
-  the better CONSECUTIVE/STAGNATION_FACTOR. Key questions:
-  - fairfuzzcd: did C=3 or C=2 fire resets? Which gave better bugs/coverage?
-  - moptaflcd: did C=8 reduce reset rate? Did SF=0.3 help?
-  - aflpluspluscd: is C=6 or C=8 more calibrated?
-- [ ] **Run dist2** with winning parameters on both reps (identical) — proper 2-rep statistical
-  repetitions needed for confidence intervals / Mann-Whitney tests on CD-vs-baseline.
+- [x] **dist5 deployed and launched** (2026-06-19 12:39 CDT, `tmux:dist5`)
+- [x] **dist6 prepared and queued**: honggfuzz UaF fix (zombie approach), 8×3 manifest,
+  rep2 SOFT_RESET=1 sweep — commit a0d951f8; auto-launches via `tmux:dist6_wait`
+- [x] **Analyze dist5 results**: honggfuzzcd Δ=+1 with 0 resets confirms UaF was causing the -11
+- [x] **Analyze dist6 results**: afl +2 ✅, fairfuzz +1 ✅, aflplusplus -3 ❌, honggfuzz INVALID ⚠
+- [x] **Fix worker-run.sh NFS issues** (commit b7077dd7):
+  - `--exclude '*.honggfuzz.cov'` added to rsync
+  - NFS free-space pre-check added (warn if <10GB)
+  - `copied` counter now only increments on rsync success
+- [x] **dist7 launched** (2026-06-20 15:29 CDT): 6-rep paired-seed sweep for honggfuzz+aflplusplus
+  — `tmux:dist7` fuzzing, `tmux:dist7_followup` auto-analysis, expected done ~20:13 CDT
+- [x] **Analyze dist7 results** (2026-06-21):
+  - honggfuzzcd: no config effective — resets consistently hurt; +2 rep fired 0 resets (noise)
+  - aflpluspluscd: SOFT_RESET=1 is the key variable; best config SR=1,C=10,CL=25 → **+11 bugs**
+  - See DECISIONS.md § dist7 outcomes for full interpretation
+- [ ] **Launch dist8** — confirm aflpluspluscd SR=1,C=10,CL=25 with ≥6 reps, 6h timeout
+  `cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist8 --timeout 6h --poll 60`
+- [ ] **Fix dist7_followup.sh verdict logic** — should analyze per-rep, not aggregated total
+- [ ] **Push commits to GitHub** — 11+ local commits unpushed (a6b53bb5..e4f0f4a0).
+  `git bundle create /tmp/cdfuzzing.bundle HEAD`, scp to local, push.
 
 ## Medium Priority
 
-- [ ] Investigate fairfuzz libtiff programs (both fuzzer+fuzzercd produced no `fuzzer_stats` in batch 1 on the previous node — root cause unknown)
-- [ ] Replace `queued_paths` coverage metric with bitmap edge count (requires parsing `fuzzer_stats` bitmap_cvg field or using `afl-showmap` on queue)
-- [ ] Add plot: reset timing distribution per fuzzer (when in 24h campaign do resets occur?)
-- [ ] Export plots for paper: `scp -r eldarfin@head...:~/cdfuzzing/plots_seed4/ ~/paper/figures/`
+## Medium Priority
+
+## Medium Priority
+
+- [ ] Re-run dist2 analysis to confirm honggfuzz coverage metric (output/ file count vs edge count):
+  the -62.6% coverage loss in honggfuzzcd may be partly an artifact of the get_final_cov()
+  fallback counting output/ files at end-of-run (near-empty after last reset). Consider adding
+  per-minute peak coverage tracking to plot_seed4.py for honggfuzz.
+- [ ] Investigate fairfuzz libtiff programs (both fuzzer+fuzzercd produced no `fuzzer_stats`
+  in batch 1 on the previous node — root cause unknown)
+- [ ] Replace `queued_paths` coverage metric with bitmap edge count (requires parsing
+  `fuzzer_stats` bitmap_cvg field or using `afl-showmap` on queue)
+- [ ] Export plots for paper: `scp -r eldarfin@head...:cdfuzzing-pg0/dist2/plots/ ~/paper/figures/`
+- [ ] Extend CloudLab lease before it expires (check deadline: `cloudlab.us → experiments → eldarfin-308618`)
 
 ## Low Priority
 
@@ -47,6 +61,12 @@
 - [x] Generate parameter evaluation report — `parameter_eval.txt` — 2026-06-17
 - [x] Fix boot_command() quoting bug in profile.py — 2026-06-17
 - [x] Fix /users shared-FS assumption in all cloudlab/*.sh — 2026-06-17
+- [x] Fix honggfuzzcd cascade loop (peak_corpus metric + 60s time-gate) — commit 7043370d
+- [x] Update dist3 parameters (fairfuzzcd C=15, aflcd/aflpluspluscd COOLDOWN=25) — 2026-06-18
+- [x] Launch and complete dist3 — 2026-06-18 ~16:15 CDT → 2026-06-19 01:07 CDT
+- [x] Implement selective reset for honggfuzzcd — commit 9132d446 (dist4)
+- [x] Launch and complete dist4 — 2026-06-19 ~03:29 CDT → 12:22 CDT
+- [x] Diagnose dist4 honggfuzzcd crash (UaF in selective reset) — commit ac9eec7f disables reset
 - [x] Provision all 25 CloudLab nodes manually (24/24 EXIT=0) — 2026-06-17
 - [x] Verify cluster: Docker, /mydata, SSH keypair, manifest, head→worker passwordless SSH — 2026-06-17
 - [x] Fix plot_seed4.py hardcoded campaign ID "0" to glob "*" for distributed layout — 2026-06-17
@@ -54,3 +74,13 @@
 - [x] Design and implement A/B per-rep CD parameter search for dist1 (worker-run.sh) — 2026-06-17
 - [x] Deploy updated worker-run.sh to all 24 workers — 2026-06-17
 - [x] Launch dist1 in tmux (8h, all 12 fuzzers × 2 reps, 24 workers) — 2026-06-17 ~20:20 CDT
+- [x] dist1 COMPLETE: all 24 workers done, results at /proj/cdfuzzing-PG0/distributed/dist1/ — 2026-06-18 ~05:20 CDT
+- [x] Fix plot_seed4.py: add honggfuzz to PAIRS, get_final_cov() fallback, output/drift_log.csv path — 2026-06-18
+- [x] Fix honggfuzzcd CD init race (initial_corpus_count sampled before corpus loads → 0 resets) — 2026-06-18
+- [x] Fix FairFuzz blacklist trap: -q 1 in run.sh + state reset in perform_corpus_reset() — 2026-06-18
+- [x] Select dist2 winning params from dist1 A/B analysis; update worker-run.sh — 2026-06-18
+- [x] Deploy 5 fixed files to all 24 workers via scp — 2026-06-18
+- [x] Launch dist2 in tmux (8h, all 12 fuzzers × 2 reps, winning params) — 2026-06-18 ~06:30 CDT
+- [x] dist2 COMPLETE: all 24 workers done, results at /proj/cdfuzzing-PG0/distributed/dist2/ — 2026-06-18 ~15:24 CDT
+- [x] Deep-dive dist2 analysis: honggfuzzcd root cause (cascade loop / non-monotonic metric), fairfuzzcd root cause (rare-branch state recovery), moptaflcd/aflfastcd win analysis — 2026-06-18
+- [x] Update EXPERIMENTS.md, DECISIONS.md, HANDOFF.md, TODO.md with dist2 results and dist3 plan — 2026-06-18

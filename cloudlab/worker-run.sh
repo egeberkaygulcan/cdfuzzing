@@ -11,18 +11,17 @@
 #   worker-run.sh --fuzzer F --rep N --run-id ID --timeout 8h \
 #                 [--targets "sqlite3 libpng ..."] [--repo PATH] [--shared PATH]
 #
-# Parameter search design (per-rep CD config):
-#   CD fuzzers run two different parameter sets across their two rep nodes so
-#   each 2-node pair acts as a single-shot A/B comparison rather than a plain
-#   repetition.  Baselines use the same config on both reps (pure repetitions).
+# Parameter design (dist2 — winning params from dist1 A/B, both reps identical):
+#   Both reps of each CD fuzzer now use the same winning parameter set so that
+#   the two reps are genuine statistical repetitions for CD-vs-baseline analysis.
 #
-#   Rep 0 (config A)          Rep 1 (config B)          Rationale
-#   aflcd         C=5  SF=0.5  C=3  SF=0.5  reference vs more aggressive
-#   aflpluspluscd C=6  SF=0.5  C=8  SF=0.5  two degrees of reduction from 2.38/prog
-#   fairfuzzcd    C=3  SF=0.5  C=2  SF=0.5  both more aggressive (C=5 fired 0 resets)
-#   moptaflcd     C=8  SF=0.5  C=5  SF=0.3  raise bar vs tighten stagnation guard
-#   aflfastcd     C=5  SF=0.5  C=3  SF=0.5  default vs more aggressive
-#   honggfuzzcd   C=5  SF=0.5  C=3  SF=0.5  default vs more aggressive
+#   Fuzzer          C   SF    dist1 basis
+#   aflcd           3  0.5   rep1 won (+10268 cov, 15 vs 6 resets)
+#   aflpluspluscd   8  0.5   rep1 won (+3388 cov, 19 vs 18 resets)
+#   fairfuzzcd      3  0.5   rep0 won (+4941 cov); blacklist bug fixed in dist2
+#   moptaflcd       5  0.3   rep1 won (+3113 cov, 31 vs 25 resets)
+#   aflfastcd       3  0.5   rep1 won (+1995 cov, 3 vs 3 resets)
+#   honggfuzzcd     5  0.5   both had 0 CD activity (init bug); default kept
 ##
 set -uo pipefail
 
@@ -31,6 +30,7 @@ REP="0"
 RUN_ID=""
 TIMEOUT="8h"
 TARGETS="sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl"
+FUZZER_SEED="" # set below from REP
 REPO="/local/repository"
 SHARED="/proj/cdfuzzing-PG0"
 
@@ -68,45 +68,69 @@ mkdir -p "$LOCALWORK" "$STATUS_DIR" "$SHARED_RUN/log"
 rm -f "$STATUS_DIR/${NODE_TAG}.done" "$STATUS_DIR/${NODE_TAG}.failed"
 echo "$(date '+%F %T') started on $(hostname)" > "$STATUS_DIR/${NODE_TAG}.running"
 
-# --- Per-rep CD parameter selection (A/B parameter search) ----------------
-# CD fuzzers assign different CONSECUTIVE / STAGNATION_FACTOR per rep so each
-# node tests a distinct config.  Baselines are unaffected (vars exported but
-# the CD module is absent).
+# --- Per-rep paired seed (baseline and CD variant share the same PRNG seed) ---
+# Both honggfuzz_N and honggfuzzcd_N use seed 1000+N, so the only variable is
+# whether CD is active.  Same for aflplusplus_N / aflpluspluscd_N.
+FUZZER_SEED=$(( 1000 + REP ))
+
+# --- CD parameter sweep (6 reps × 2 pairs: honggfuzz and aflplusplus) ----------
+#
+# honggfuzzcd sweep — vary detection window size and consecutive-trigger count.
+#   WINDOW: samples per KS half-window (each ~60 s); CONSECUTIVE: windows in a
+#   row that must all show p < THRESHOLD before a reset fires.
+#
+#  rep | WINDOW | CONSEC | COOLDOWN | profile
+#  ----+--------+--------+----------+---------
+#   0  |   5    |   8    |   10     | conservative  (slow to trigger)
+#   1  |   5    |   5    |   10     | default       (dist3–dist6 baseline)
+#   2  |   5    |   3    |   10     | moderate
+#   3  |   3    |   3    |   10     | aggressive    (fast window)
+#   4  |   3    |   2    |    5     | very aggressive + short cooldown
+#   5  |  10    |   5    |   15     | loose window  (less sensitive)
+#
+# aflpluspluscd sweep — vary SOFT_RESET mode and trigger aggressiveness.
+#   SOFT_RESET=1: det+havoc (re-runs deterministic stages post-reset)
+#   SOFT_RESET=2: havoc-only (keeps passed_det=1; no det re-run)
+#
+#  rep | SR | CONSEC | BOOST | COOLDOWN | profile
+#  ----+----+--------+-------+----------+---------
+#   0  |  2 |   8    |   2   |   25     | current default
+#   1  |  1 |   8    |   1   |   25     | det+havoc, same trigger
+#   2  |  1 |   6    |   1   |   25     | det+havoc, faster trigger
+#   3  |  1 |   6    |   1   |   10     | det+havoc, fast + short cooldown
+#   4  |  2 |   6    |   2   |   10     | havoc-only, fast + short cooldown
+#   5  |  1 |  10    |   1   |   25     | det+havoc, conservative trigger
+
 CD_CONSECUTIVE=5
 CD_STAGNATION=0.5
-if [[ "$FUZZER" == *cd ]]; then
-    case "$FUZZER" in
-        aflcd)
-            # seed_4: 0.43 resets/prog — well-calibrated; explore tighter bound
-            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=5 || CD_CONSECUTIVE=3
-            ;;
-        aflpluspluscd)
-            # seed_4: 2.38 resets/prog — slightly high; test two reductions
-            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=6 || CD_CONSECUTIVE=8
-            ;;
-        fairfuzzcd)
-            # seed_4: 0 resets (C=5 filtered 100% of drifts); both more aggressive
-            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=3 || CD_CONSECUTIVE=2
-            ;;
-        moptaflcd)
-            # seed_4: 3.62 resets/prog; raise bar vs tighten stagnation guard
-            if [ "$REP" -eq 0 ]; then
-                CD_CONSECUTIVE=8; CD_STAGNATION=0.5
-            else
-                CD_CONSECUTIVE=5; CD_STAGNATION=0.3
-            fi
-            ;;
-        aflfastcd)
-            # seed_4: partial — unknown calibration; default vs more aggressive
-            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=5 || CD_CONSECUTIVE=3
-            ;;
-        honggfuzzcd)
-            # seed_4: never ran — default vs more aggressive
-            [ "$REP" -eq 0 ] && CD_CONSECUTIVE=5 || CD_CONSECUTIVE=3
-            ;;
-    esac
-fi
-log "CD params: CONSECUTIVE=$CD_CONSECUTIVE STAGNATION_FACTOR=$CD_STAGNATION"
+CD_COOLDOWN=10
+CD_WINDOW=100
+CD_SOFT_RESET=2
+CD_HAVOC_BOOST=2
+
+case "$FUZZER" in
+    honggfuzzcd)
+        case "$REP" in
+            0) CD_WINDOW=5;  CD_CONSECUTIVE=8; CD_COOLDOWN=10 ;;
+            1) CD_WINDOW=5;  CD_CONSECUTIVE=5; CD_COOLDOWN=10 ;;
+            2) CD_WINDOW=5;  CD_CONSECUTIVE=3; CD_COOLDOWN=10 ;;
+            3) CD_WINDOW=3;  CD_CONSECUTIVE=3; CD_COOLDOWN=10 ;;
+            4) CD_WINDOW=3;  CD_CONSECUTIVE=2; CD_COOLDOWN=5  ;;
+            5) CD_WINDOW=10; CD_CONSECUTIVE=5; CD_COOLDOWN=15 ;;
+        esac
+        ;;
+    aflpluspluscd)
+        case "$REP" in
+            0) CD_SOFT_RESET=2; CD_CONSECUTIVE=8;  CD_HAVOC_BOOST=2; CD_COOLDOWN=25 ;;
+            1) CD_SOFT_RESET=1; CD_CONSECUTIVE=8;  CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;
+            2) CD_SOFT_RESET=1; CD_CONSECUTIVE=6;  CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;
+            3) CD_SOFT_RESET=1; CD_CONSECUTIVE=6;  CD_HAVOC_BOOST=1; CD_COOLDOWN=10 ;;
+            4) CD_SOFT_RESET=2; CD_CONSECUTIVE=6;  CD_HAVOC_BOOST=2; CD_COOLDOWN=10 ;;
+            5) CD_SOFT_RESET=1; CD_CONSECUTIVE=10; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;
+        esac
+        ;;
+esac
+log "seed=$FUZZER_SEED CD params: W=$CD_WINDOW C=$CD_CONSECUTIVE SR=$CD_SOFT_RESET BOOST=$CD_HAVOC_BOOST CL=$CD_COOLDOWN SF=$CD_STAGNATION"
 
 # --- Generate a single-fuzzer captainrc -----------------------------------
 CAPTAINRC="$LOCALWORK/captainrc_${NODE_TAG}"
@@ -122,14 +146,17 @@ CAPTAINRC="$LOCALWORK/captainrc_${NODE_TAG}"
     echo "FUZZERS=($FUZZER)"
     echo "${FUZZER}_TARGETS=($TARGETS)"
     echo ""
+    echo "# Paired PRNG seed — baseline and CD variant use the same value per rep"
+    echo "export FUZZER_SEED=$FUZZER_SEED"
+    echo ""
     echo "# CD drift parameters (no effect on baseline fuzzers)"
-    echo "export AFL_DRIFT_WINDOW=100"
+    echo "export AFL_DRIFT_WINDOW=$CD_WINDOW"
     echo "export AFL_DRIFT_THRESHOLD=0.05"
-    echo "export AFL_DRIFT_SOFT_RESET=2"
+    echo "export AFL_DRIFT_SOFT_RESET=$CD_SOFT_RESET"
     echo "export AFL_DRIFT_MAX_RESETS=0"
-    echo "export AFL_DRIFT_HAVOC_BOOST=2"
+    echo "export AFL_DRIFT_HAVOC_BOOST=$CD_HAVOC_BOOST"
     echo "export AFL_DRIFT_BOOST_CYCLES=1"
-    echo "export AFL_DRIFT_COOLDOWN=10"
+    echo "export AFL_DRIFT_COOLDOWN=$CD_COOLDOWN"
     echo "export AFL_DRIFT_CONSECUTIVE=$CD_CONSECUTIVE"
     echo "export AFL_DRIFT_EMA_ALPHA=0.1"
     echo "export AFL_DRIFT_STAGNATION_FACTOR=$CD_STAGNATION"
@@ -137,6 +164,12 @@ CAPTAINRC="$LOCALWORK/captainrc_${NODE_TAG}"
 log "captainrc -> $CAPTAINRC"
 
 # --- Run the campaign ------------------------------------------------------
+# --- NFS space pre-check ---------------------------------------------------
+FREE_GB=$(df --output=avail -BG "$SHARED" 2>/dev/null | tail -1 | tr -d 'G ')
+if [[ -n "$FREE_GB" && "$FREE_GB" -lt 10 ]]; then
+    log "WARN: NFS has only ${FREE_GB}G free — rsync may fail due to quota exceeded"
+fi
+
 log "launching captain (timeout=$TIMEOUT, targets: $TARGETS)"
 cd "$CAPTAIN"
 RC=0
@@ -154,13 +187,17 @@ for cid_dir in "$LOCALWORK"/ar/"$FUZZER"/*/*/0; do
     base="${rel%/0}"                        # fuzzer/target/program
     dest="$SHARED_RUN/ar/$base/$REP"
     mkdir -p "$dest"
-    rsync -a \
+    if rsync -a \
         --exclude 'queue/' \
         --exclude 'corpus/' \
+        --exclude '*.honggfuzz.cov' \
         --exclude '.cur_input' \
         --exclude '.synced/' \
-        "$cid_dir"/ "$dest"/ 2>/dev/null
-    copied=$((copied + 1))
+        "$cid_dir"/ "$dest"/ 2>>"$SHARED_RUN/log/${NODE_TAG}.log"; then
+        copied=$((copied + 1))
+    else
+        log "WARN: rsync failed for $cid_dir (NFS quota or I/O error — check log)"
+    fi
 done
 shopt -u nullglob
 log "published $copied program result dirs to $SHARED_RUN/ar"

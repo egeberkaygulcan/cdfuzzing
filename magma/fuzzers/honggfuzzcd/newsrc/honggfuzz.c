@@ -263,6 +263,16 @@ static void* signalThread(void* arg) {
 /* --- Drift detection: sample & act from main thread --- */
 static uint64_t drift_last_mutations = 0;
 
+/* Time-based drift state for honggfuzz.
+ * honggfuzz runs at ~2M exec/min; WINDOW=100 iterations = 3ms, causing thousands
+ * of false drift detections from corpus minimization (dynfileqCnt is non-monotonic).
+ * Fixes applied here:
+ *  1. Time-gate: drift_check_value called at most once per DRIFT_SAMPLE_SEC seconds.
+ *  2. Peak-corpus metric: pass max-ever corpus count instead of current count so that
+ *     corpus minimization (which shrinks dynfileqCnt) never registers as stagnation.
+ *  3. Peak reset after corpus reset: each epoch starts fresh. */
+#define DRIFT_SAMPLE_SEC 60   /* check drift at most once per minute */
+
 static void driftCycle(honggfuzz_t* hfuzz) {
     if (!drift_det) return;
 
@@ -277,28 +287,56 @@ static void driftCycle(honggfuzz_t* hfuzz) {
     if (mutations == drift_last_mutations) return;
     drift_last_mutations = mutations;
 
-    /* Lazily capture initial corpus size on first real cycle (threads may not
-     * have finished loading the corpus when drift_det was initialized). */
+    /* --- Peak-corpus metric ---
+     * dynfileqCnt is non-monotonic: corpus minimization removes entries.
+     * Using the all-time peak prevents spurious stagnation detections. */
+    static uint64_t honggfuzz_peak_corpus = 0;
+    if (corpus > honggfuzz_peak_corpus) {
+        honggfuzz_peak_corpus = corpus;
+    }
+
+    /* --- Lazily capture initial corpus size for the reset mechanism ---
+     * initial_corpus_count controls how many seeds are kept on corpus reset;
+     * it should reflect the actual seed count, not the peak edge count. */
     if (drift_det->initial_corpus_count == 0 && corpus > 0) {
         drift_det->initial_corpus_count = corpus;
-        LOG_I("Drift: initial_corpus_count set lazily to %zu", (size_t)corpus);
+        LOG_I("Drift: initial_corpus_count set lazily to %zu (seed count)", (size_t)corpus);
     }
 
     drift_det->iteration = mutations;
 
-    /* Update history */
-    drift_update(drift_det, mutations, corpus, coverage);
+    /* Always accumulate history using peak corpus so the KS test sees a
+     * monotonically non-decreasing signal (mirrors AFL's queued_paths). */
+    drift_update(drift_det, mutations, honggfuzz_peak_corpus, coverage);
 
-    /* Check for value drift every window_size iterations */
-    if (mutations >= drift_det->window_size &&
-        mutations % drift_det->window_size == 0) {
+    /* --- Time-gated drift check ---
+     * Only call drift_check_value once per DRIFT_SAMPLE_SEC seconds.
+     * At 2M exec/min, the iteration-based gate (mutations % window_size == 0)
+     * fires every 3ms — far too fast for meaningful stagnation detection.
+     * With time-gating, each "window" corresponds to ~DRIFT_SAMPLE_SEC seconds
+     * of real time, and AFL_DRIFT_CONSECUTIVE=5 means 5 minutes of stagnation. */
+    static uint64_t honggfuzz_last_check_sec = 0;
+    if (elapsed_sec < honggfuzz_last_check_sec + DRIFT_SAMPLE_SEC) {
+        drift_csv_update(drift_det, mutations, coverage, elapsed_ms, corpus);
+        return;
+    }
+    honggfuzz_last_check_sec = elapsed_sec;
 
+    if (drift_det->history_len >= drift_det->window_size * 2) {
         if (drift_check_value(drift_det, mutations)) {
-            LOG_I("Value drift detected at iteration %" PRIu64 "!", mutations);
+            LOG_I("Value drift detected at elapsed %"PRIu64"s (iter %"PRIu64")!",
+                  elapsed_sec, mutations);
 
             if (drift_det->reset_on_drift) {
-                LOG_W("Performing corpus reset...");
-                drift_perform_corpus_reset(drift_det, hfuzz);
+                LOG_W("Performing corpus reset (seeds only — reset_on_drift enabled)...");
+                drift_perform_corpus_reset(drift_det, hfuzz,
+                                           drift_det->initial_corpus_count, 0);
+                /* Reset peak so next epoch starts fresh and the KS test can
+                 * detect the new growth→plateau transition. */
+                honggfuzz_peak_corpus = 0;
+                /* Re-enable lazy init so initial_corpus_count reflects the
+                 * new seed count (drift_perform_corpus_reset sets history_len=0). */
+                drift_det->initial_corpus_count = 0;
                 LOG_I("Resuming fuzzing from initial seeds...");
             }
         }
@@ -469,8 +507,14 @@ int main(int argc, char** argv) {
         }
         /* Record initial corpus size for reset baseline */
         drift_det->initial_corpus_count = ATOMIC_GET(hfuzz.io.dynfileqCnt);
-        LOG_I("Drift detection initialized (window=%u, threshold=%.3f, initial_corpus=%zu)",
-              drift_det->window_size, drift_det->drift_threshold, drift_det->initial_corpus_count);
+        /* Reset is safe: drift_perform_corpus_reset() no longer frees entries
+         * (zombie approach -- see drift-detect.c), eliminating the UaF crash
+         * observed in dist4 where worker threads held raw dynfile_t* pointers
+         * outside the dynfileq lock while the reset freed those entries. */
+        LOG_I("Drift detection initialized (window=%u, threshold=%.3f, initial_corpus=%zu, reset=%s)",
+              drift_det->window_size, drift_det->drift_threshold,
+              drift_det->initial_corpus_count,
+              drift_det->reset_on_drift ? "ON" : "OFF");
     }
 
     pthread_t sigthread;

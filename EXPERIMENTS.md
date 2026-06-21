@@ -2,6 +2,241 @@
 
 ---
 
+## distributed (CloudLab): dist7 — 6 reps × 4 fuzzers, 4h, paired-seed parameter sweep (COMPLETE)
+
+Goal:
+Re-run honggfuzz/honggfuzzcd and aflplusplus/aflpluspluscd pairs with three improvements:
+1. **Paired PRNG seed**: both baseline and CD variant in rep N use `FUZZER_SEED=1000+N`, so the
+   only variable is CD on/off + parameter configuration (honggfuzz: `util.c` `FUZZER_SEED` env;
+   AFL++: `-s $FUZZER_SEED` flag).
+2. **6-rep parameter sweep** per CD fuzzer covering the full sensitivity range:
+   - honggfuzzcd: sweep detection window (W=3–10) and consecutive-trigger count (C=2–8)
+   - aflpluspluscd: sweep SOFT_RESET mode (1=det+havoc, 2=havoc-only) and trigger aggressiveness
+3. **NFS rsync fixes**: exclude `*.honggfuzz.cov` corpus files, log errors, fix `copied` counter,
+   add pre-launch free-space check.
+
+| Pair | Reps | Nodes | Seeds |
+|---|---|---|---|
+| honggfuzz / honggfuzzcd | 6 each | .10–.15 / .16–.21 | 1000–1005 (shared per rep) |
+| aflplusplus / aflpluspluscd | 6 each | .22–.27 / .28–.33 | 1000–1005 (shared per rep) |
+
+honggfuzzcd sweep (W=window, C=consecutive, CL=cooldown):
+| Rep | W | C | CL | Profile |
+|---|---|---|---|---|
+| 0 | 5 | 8 | 10 | Conservative |
+| 1 | 5 | 5 | 10 | Default (dist3–dist6) |
+| 2 | 5 | 3 | 10 | Moderate |
+| 3 | 3 | 3 | 10 | Aggressive |
+| 4 | 3 | 2 | 5  | Very aggressive |
+| 5 | 10 | 5 | 15 | Loose window |
+
+aflpluspluscd sweep (SR=SOFT_RESET, C=consecutive, CL=cooldown):
+| Rep | SR | C | CL | Profile |
+|---|---|---|---|---|
+| 0 | 2 | 8 | 25 | Current default |
+| 1 | 1 | 8 | 25 | det+havoc, same trigger |
+| 2 | 1 | 6 | 25 | det+havoc, faster trigger |
+| 3 | 1 | 6 | 10 | det+havoc, fast + short cooldown |
+| 4 | 2 | 6 | 10 | havoc-only, fast + short cooldown |
+| 5 | 1 | 10 | 25 | det+havoc, conservative trigger |
+
+Code changes (commit b7077dd7):
+- `worker-run.sh`: 6-rep case tables, FUZZER_SEED export, rsync fixes, NFS pre-check
+- `cluster/manifest.txt` (NFS, not in repo): 6 reps × 4 fuzzers = 24 workers
+
+Status: **COMPLETE** — launched 2026-06-20 15:29 CDT, all 24 workers done by 20:21 CDT.
+NFS fix confirmed effective: no quota errors, all honggfuzz/honggfuzzcd data synced.
+Data: `/proj/cdfuzzing-PG0/distributed/dist7/ar/` | Plots: `…/dist7/plots/`
+See DECISIONS.md § dist7 outcomes for full analysis.
+
+**honggfuzz → honggfuzzcd (per-rep results):**
+
+| Rep | base | cd | Δbugs | resets | config |
+|-----|------|----|-------|--------|--------|
+| 0 | 34 | 23 | **-11** | 30 | W=5, C=8, CL=10 (conservative) |
+| 1 | 22 | 16 | **-6** | 23 | W=5, C=5, CL=10 (default) |
+| 2 | 30 | 19 | **-11** | 25 | W=5, C=3, CL=10 (moderate) |
+| 3 | 21 | 23 | **+2** | 0 | W=3, C=3, CL=10 (aggressive) |
+| 4 | 34 | 27 | **-7** | 0 | W=3, C=2, CL=5 (very aggressive) |
+| 5 | 23 | 20 | **-3** | 67 | W=10, C=5, CL=15 (loose) |
+
+Note: the only positive rep (3) fired 0 resets — the +2 is likely noise, not a CD effect.
+
+**aflplusplus → aflpluspluscd (per-rep results):**
+
+| Rep | base | cd | Δbugs | resets | config |
+|-----|------|----|-------|--------|--------|
+| 0 | 23 | 23 | **0** | 9 | SR=2, C=8, CL=25 (default) |
+| 1 | 33 | 35 | **+2** | 9 | SR=1, C=8, CL=25 (det+havoc) |
+| 2 | 33 | 33 | **0** | 13 | SR=1, C=6, CL=25 (det+havoc fast) |
+| 3 | 30 | 36 | **+6** | 13 | SR=1, C=6, CL=10 (det+havoc fast+short CL) |
+| 4 | 37 | 25 | **-12** | 9 | SR=2, C=6, CL=10 (havoc-only fast) |
+| 5 | 26 | 37 | **+11** | 9 | SR=1, C=10, CL=25 (det+havoc conservative) |
+
+Key finding: SOFT_RESET=1 is essential — all SR=1 reps ≥ 0, both SR=2 reps ≤ 0.
+Best config: Rep 5 (SR=1, C=10, CL=25) with +11 bugs and 9 resets.
+See DECISIONS.md § dist7 outcomes for interpretation and next steps.
+
+---
+
+## distributed (CloudLab): dist6 — 8 fuzzers × 3 reps, 8h, honggfuzz UaF fix + rep2 param sweep (COMPLETE)
+
+Goal:
+Three changes from dist5:
+1. **honggfuzzcd UaF fix**: corpus reset re-enabled with zombie approach — removed entries
+   keep `entry->size=0` but are not freed; worker threads reading stale pointers get size=0
+   and copy 0 bytes safely. This eliminates the dist4 crash without invasive refactoring.
+2. **Manifest redesign**: drop moptafl/aflfast/moptaflcd/aflfastcd (4 fuzzers × 2 reps = 8 nodes);
+   redistribute to 3rd rep for remaining 8 fuzzers. Result: 8 fuzzers × 3 reps = 24 nodes.
+3. **Rep 2 param sweep** for CD variants: test `AFL_DRIFT_SOFT_RESET=1` (det+havoc mode, allowing
+   favored entries to re-run deterministic stages post-reset) vs current `=2` (havoc-only).
+   Hypothesis: SOFT_RESET=2 blocked deterministic mutation stages after reset, causing negative Δ.
+
+| Fuzzer | Rep 0 & 1 | Rep 2 (sweep) |
+|---|---|---|
+| aflcd | SOFT_RESET=2, BOOST=2 | SOFT_RESET=1, BOOST=1 |
+| aflpluspluscd | SOFT_RESET=2, BOOST=2, C=8 | SOFT_RESET=1, BOOST=1, C=6 |
+| fairfuzzcd | SOFT_RESET=2, BOOST=2, C=15 | SOFT_RESET=1, BOOST=1 |
+| honggfuzzcd | WINDOW=5, CONSEC=5, reset=ON | WINDOW=3, CONSEC=3, reset=ON |
+| baselines | unchanged | pure replication |
+
+Code changes (commit a0d951f8):
+- `drift-detect.c`: zombie approach in `drift_perform_corpus_reset()` — no `free(entry)`
+- `honggfuzz.c`: remove `reset_on_drift=false` override; log shows `reset=ON` dynamically
+- `worker-run.sh`: add rep2 override block with SOFT_RESET/HAVOC_BOOST variables
+- `cluster/manifest.txt` (NFS, not in repo): 8 fuzzers × 3 reps = 24 workers
+
+Status: COMPLETE — launched 2026-06-19 ~21:25 CDT, finished 2026-06-20 ~06:52 CDT. 24/24 workers done
+(7 workers had NFS quota exceeded on .done file write; manually created). Data: `/proj/cdfuzzing-PG0/distributed/dist6/ar/`
+Plots: `…/dist6/plots/`
+
+**⚠ NFS DATA LOSS — honggfuzzcd (all 3 reps)**: The NFS was at 100% quota when the 3
+honggfuzzcd workers (last to finish due to 44-min openssl build) tried to rsync their results.
+`rsync` errors were silently suppressed (`2>/dev/null`), so only the first 5 of 21 programs
+were saved. honggfuzzcd results are **invalid** and must be re-run.
+Also partially affected: afl-2, aflplusplus-2, honggfuzz-2, aflpluspluscd-2 (likely minor).
+
+Results summary (3 reps, rep2 = SOFT_RESET=1 sweep for AFL-based CD):
+| Pair | Δbugs | Δcov% | Resets | Verdict |
+|---|---|---|---|---|
+| afl → aflcd | **+2** | -0.2% | 6 | ✅ Positive (2nd straight positive result) |
+| fairfuzz → fairfuzzcd | **+1** | -1.4% | 0 | ✅ Improved from dist5 -3 (SOFT_RESET=1 rep2 helped?) |
+| aflplusplus → aflpluspluscd | **-3** | +0.5% | 10 | ❌ Still negative despite SOFT_RESET=1 |
+| honggfuzz → honggfuzzcd | **INVALID** | **INVALID** | 5 | ⚠ Data loss — only 5/21 programs synced |
+
+See DECISIONS.md § dist6 for root cause analysis and rationale.
+
+---
+
+## distributed (CloudLab): dist5 — 12 fuzzers, 8h, honggfuzz monitoring-only (COMPLETE)
+
+Goal:
+Fix the dist4 use-after-free crash in honggfuzzcd. The selective reset freed dynfile_t entries
+while worker threads held raw pointers to them (outside the lock scope). Fix: disable corpus
+reset for honggfuzzcd entirely (monitoring-only). Hypothesis: 0 resets => 0 coverage loss
+=> honggfuzzcd ≈ honggfuzz baseline. Also provides a clean 4th data point for moptaflcd/aflfastcd.
+
+Code change (single line in honggfuzz.c):
+Set `drift_det->reset_on_drift = false` after init. No parameter changes from dist4.
+
+Status: COMPLETE — launched 2026-06-19 12:39 CDT, finished 2026-06-19 ~21:23 CDT. 24/24 workers done, 0 failed.
+Data: `/proj/cdfuzzing-PG0/distributed/dist5/ar/` | Plots: `…/dist5/plots/`
+
+Results summary (2 reps each):
+| Pair | Δbugs | Δcov% | Resets | Verdict |
+|---|---|---|---|---|
+| afl → aflcd | **+4** | +1.4% | 5 | ✅ First strong positive result |
+| aflfast → aflfastcd | **+5** | -0.4% | 4 | ✅ Consistent positive |
+| moptafl → moptaflcd | **+1** | +3.5% | 29 | ≈ Weak positive, high resets |
+| fairfuzz → fairfuzzcd | **-3** | +2.2% | 1 | ❌ Systematic negative (3rd/4th time) |
+| aflplusplus → aflpluspluscd | **-6** | -2.5% | 12 | ❌ Worst result yet |
+| honggfuzz → honggfuzzcd | **+1** | -2.1% | 0 | ✅ Monitoring-only ≈ 0 confirms UaF was causing the -11 |
+
+See DECISIONS.md § dist5 for root cause analysis and rationale.
+
+---
+
+## distributed (CloudLab): dist4 — all 12 fuzzers, 8h, honggfuzz selective reset (COMPLETE)
+
+Goal:
+Fix honggfuzzcd coverage loss by implementing selective corpus reset (keep seeds + 30 recent
+entries, discard middle-aged ones). No parameter changes from dist3.
+
+Code change: `drift_perform_corpus_reset(dd, hfuzz, keep_seeds, keep_recent=30)`
+in drift-detect.c + honggfuzz.c (commit 9132d446).
+
+Status: COMPLETE — finished 2026-06-19 ~12:22 CDT. All 24 workers done (2 honggfuzzcd
+workers ran until ~12:13 due to 44-min openssl build time). 0 failures.
+Data: `/proj/cdfuzzing-PG0/distributed/dist4/ar/` | Plots: `…/dist4/plots/`
+
+Results summary:
+| Pair | Δbugs | Δcov% | Resets | Verdict |
+|---|---|---|---|---|
+| moptafl → moptaflcd | **-3** | +3.3% | 32 | ❌ Regressed vs dist2/3 (+6/+5). Likely variance. |
+| aflfast → aflfastcd | +1 | -2.8% | 4 | ⚠ aflfastcd found 27 bugs (same as every run); base improved (+26 vs 22). |
+| aflplusplus → aflpluspluscd | +2 | +4.8% | 16 | ⚠ Improved vs dist3 (-2). Still noisy. |
+| afl → aflcd | 0 | +0.9% | 2 | ≈ Consistent neutral. |
+| fairfuzz → fairfuzzcd | **-6** | +5.5% | 0 | ❌ 3rd consecutive negative result. Systematic? |
+| honggfuzz → honggfuzzcd | **-12** | **-62.1%** | **28** | ❌ Selective reset crashed (UaF): 19 programs ran only ~1 min. |
+
+Root-cause analysis (see DECISIONS.md § dist4 analysis):
+- honggfuzzcd selective reset use-after-free: `drift_perform_corpus_reset` freed dynfile_t
+  entries while worker threads held stale pointers outside the lock scope. Thread read
+  freed `entry->size` → garbage (140337996787424) → `input_setSize(): Too large`.
+  Crash evidence: containers terminated at minute 1 across all 19 programs that had a reset.
+- AFL fuzzers: no code changes — all differences from dist3 are variance (2 reps insufficient
+  for statistical confidence). Key observation: aflfastcd found exactly 27 bugs in all 3
+  experiments; the δ change (+5/+5/+1) is driven by baseline variance, not CD regression.
+
+---
+
+## distributed (CloudLab): dist3 — all 12 fuzzers, 8h, bug-fix params (COMPLETE)
+
+Goal:
+Re-run dist2 with three code fixes and updated CD parameters that address the root causes found
+in dist2 analysis. Expected to fix honggfuzzcd cascade (761→~5 resets).
+
+Code changes applied (commit 7043370d):
+1. `honggfuzzcd/newsrc/honggfuzz.c:driftCycle()`: two-part fix:
+   - **Peak-corpus metric**: pass `max(peak_corpus, corpus)` to drift_update (monotone).
+   - **Time-based gate**: call drift_check_value at most once per 60 seconds.
+   - **Post-reset reset**: peak_corpus and initial_corpus_count = 0 after each reset.
+2. `cloudlab/worker-run.sh`: fairfuzzcd C=15, aflcd/aflpluspluscd COOLDOWN=25, honggfuzzcd WINDOW=5.
+
+Parameters used:
+| CD Fuzzer      | C    | SF   | COOLDOWN | WINDOW | Change from dist2           |
+|---|---|---|---|---|---|
+| honggfuzzcd    | 5    | 0.5  | 10       | 5      | Code fix (peak_corpus+time-gate) |
+| fairfuzzcd     | 15   | 0.5  | 10       | 100    | C: 3→15                     |
+| aflcd          | 5    | 0.5  | 25       | 100    | COOLDOWN: 10→25             |
+| aflpluspluscd  | 8    | 0.5  | 25       | 100    | COOLDOWN: 10→25             |
+| moptaflcd      | 5    | 0.3  | 10       | 100    | Unchanged                   |
+| aflfastcd      | 3    | 0.5  | 10       | 100    | Unchanged                   |
+
+Status: COMPLETE — finished 2026-06-19 ~01:07 CDT. All 24 workers done.
+Data: `/proj/cdfuzzing-PG0/distributed/dist3/ar/` | Plots: `…/dist3/plots/`
+
+Results summary:
+| Pair | Δbugs | Δcov% | Resets | vs dist2 | Verdict |
+|---|---|---|---|---|---|
+| moptafl → moptaflcd | **+5** | +1.7% | 23 | was +6/33R | ✅ Consistent. |
+| aflfast → aflfastcd | **+5** | -3.4% | 3 | was +5/5R | ✅ Consistent. |
+| aflplusplus → aflpluspluscd | -2 | **+5.1%** | 13 | was 0/14R | ⚠ Coverage gain but -2 bugs (likely variance). |
+| afl → aflcd | -1 | -1.5% | 5 | was -1/8R | ⚠ Noise-level. sqlite3 +2 bugs offset by libtiff/poppler. |
+| fairfuzz → fairfuzzcd | -3 | -0.7% | 1 | was -2/3R | ❌ Still negative. 1 reset minimal damage; -3 likely variance. |
+| honggfuzz → honggfuzzcd | **-11** | **-56.7%** | **25** | was -16/761R | ❌ Cascade fixed (97% reset reduction), but hard reset still destroys coverage: 1 reset → 60-85% cov loss. |
+
+Root-cause analysis (see DECISIONS.md § dist3 analysis):
+- honggfuzzcd code fix worked exactly as designed: cascade eliminated (761→25 resets, drift 7036→93).
+  Remaining failure: honggfuzz's hard reset is architecturally incompatible with CD.
+  Even 1 reset causes 60-85% coverage loss because honggfuzz rebuilds corpus from 5 seeds
+  extremely slowly vs AFL's deterministic stages. Fix requires selective/soft reset (dist4).
+- fairfuzzcd: C=15 cut resets from 3→1 as expected. Remaining -3 bugs is within noise range
+  (dist2 was -2, 2 reps insufficient to distinguish signal from noise at this level).
+- moptaflcd/aflfastcd: confirmed reliable (+5 bugs each, 2nd consecutive experiment).
+
+---
+
 ## seed_4: Batch 1 — fairfuzz + aflplusplus (24h)
 
 Goal:
@@ -185,7 +420,7 @@ Summary:
 
 ---
 
-## distributed (CloudLab): dist1 — all 12 fuzzers, 8h, multi-node (RUNNING)
+## distributed (CloudLab): dist1 — all 12 fuzzers, 8h, multi-node (COMPLETE)
 
 Goal:
 Replace the single-machine seed-by-seed workflow with one node per
@@ -209,22 +444,101 @@ Configuration:
 - Worker run log: `/mydata/dist1-<fuzzer>-<rep>.boot.log` on each worker
 - Merge target: `/proj/cdfuzzing-PG0/distributed/dist1/`
 
-Output (expected):
+Output:
 - `/proj/cdfuzzing-PG0/distributed/dist1/ar/<fuzzer>/<target>/<program>/<rep>/`
-- `/proj/cdfuzzing-PG0/distributed/dist1/plots/` (from `plot_seed4.py` via CDFUZZ_BASE)
-- `.../status/*.done|.failed` markers
-- `/proj/cdfuzzing-PG0/distributed/dist1_orch.log` (live orchestrator log)
+- `/proj/cdfuzzing-PG0/distributed/dist1/plots/` (55 files from `plot_seed4.py`)
+- `/proj/cdfuzzing-PG0/distributed/dist1_orch.log`
 
 Status:
-RUNNING — dispatched 2026-06-17 20:20 CDT; expected finish ~06:00 CDT 2026-06-18.
-All 24 workers dispatched (0 skipped). Polling every 60s.
+COMPLETE — finished 2026-06-18 ~05:20 CDT. All 24 workers done, 0 failed.
+
+Summary:
+| Pair | Δbugs | Δcov% | Resets | Notes |
+|---|---|---|---|---|
+| moptafl→moptaflcd | +3 | +6.3% | 25 | Best. sqlite3 +89%. |
+| aflfast→aflfastcd | +1 | +1.0% | 3 | Modest positive. |
+| afl→aflcd | +0 | +5.7% | 6 | Good coverage gain. |
+| aflplusplus→aflpluspluscd | +0 | -0.2% | 18 | Near neutral. |
+| fairfuzz→fairfuzzcd | -5 | -14.4% | 0 | BUG: blacklist trap (fixed). |
+| honggfuzz→honggfuzzcd | -3 | +3.3% | 0 | BUG: CD init race (fixed). |
+
+Bugs found and fixed (all in codebase for dist2):
+- `plot_seed4.py`: honggfuzz missing from PAIRS; get_final_cov() fallback for output/ layout;
+  parse_drift_log() output/ path for honggfuzz family
+- `honggfuzzcd/newsrc/honggfuzz.c`: lazy initial_corpus_count in driftCycle() —
+  dist1 had 17512 drifts detected, 0 resets fired (all blocked by initial_corpus_count==0)
+- `fairfuzzcd/newsrc/afl-fuzz.c` + both fairfuzz*/run.sh: FairFuzz blacklist trap —
+  `-q 1` enables vanilla AFL fallback when stuck; perform_corpus_reset() now clears
+  hit_bits/blacklist/fuzzed_branches so CD resets don’t re-trigger the stuck state
 
 Notes:
-dist1 was preceded by smoke1 which verified the full pipeline.
-queue/ is excluded from rsync (fuzzer_stats, plot_data, drift_log.csv, monitor/ only).
-Analysis auto-runs via merge-results.sh when all workers complete.
-If auto-analysis fails, run manually:
-  CDFUZZ_BASE=/proj/cdfuzzing-PG0/distributed/dist1 \
-  CDFUZZ_OUTDIR=/proj/cdfuzzing-PG0/distributed/dist1/plots \
-  python3 /local/repository/plot_seed4.py
+dist1 A/B parameter comparison (per-rep different params) produced winning params
+for dist2. Files deployed to workers via scp (git push to GitHub SSH blocked on head node).
+
+---
+
+## distributed (CloudLab): dist2 — all 12 fuzzers, 8h, winning params (RUNNING)
+
+Goal:
+Replicate dist1 with winning CD parameters on both reps for each fuzzer.
+Both reps are genuine statistical repetitions (not A/B). Also validates the three
+bug fixes applied after dist1: honggfuzz.c CD init, FairFuzz blacklist trap,
+FairFuzz state reset on corpus reset.
+
+Command:
+```bash
+cd /local/repository/cloudlab
+./orchestrate.sh --run-id dist2 --timeout 8h
+# launched in tmux session 'dist2' on head, 2026-06-18 ~06:30 CDT
+```
+
+Configuration:
+- Same cluster (25 nodes), same targets, same programs as dist1
+- Winning params: aflcd C=3/SF=0.5, aflpluspluscd C=8/SF=0.5, fairfuzzcd C=3/SF=0.5,
+  moptaflcd C=5/SF=0.3, aflfastcd C=3/SF=0.5, honggfuzzcd C=5/SF=0.5
+- Baselines: both reps identical (unchanged)
+- Code fixes active: honggfuzz.c lazy init, fairfuzz -q 1, perform_corpus_reset() state reset
+
+Output:
+- `/proj/cdfuzzing-PG0/distributed/dist2/ar/<fuzzer>/<target>/<program>/<rep>/`
+- `/proj/cdfuzzing-PG0/distributed/dist2/plots/` (from plot_seed4.py)
+- `/proj/cdfuzzing-PG0/distributed/dist2_orch.log`
+
+Status:
+COMPLETE — finished 2026-06-18 ~15:24 CDT. All 24 workers done. 58 analysis files in
+`/proj/cdfuzzing-PG0/distributed/dist2/plots/`.
+
+Results summary:
+| Pair | Δbugs | Δcov% | Resets | Verdict |
+|---|---|---|---|---|
+| moptafl → moptaflcd | **+6** | -0.4% | 33 | ✅ Best. libtiff TIF002, TIF008, poppler PDF008, sqlite3 SQL012/SQL020 all new. |
+| aflfast → aflfastcd | **+5** | -0.5% | 5 | ✅ Good. libxml2 XML009, server SSL020, sqlite3 SQL018 new. |
+| aflplusplus → aflpluspluscd | +0 | +1.6% | 14 | ≈ Neutral. |
+| afl → aflcd | -1 | -2.8% | 8 | ⚠ Slight regression; sqlite3 miss likely variance (0 resets on sqlite3). |
+| fairfuzz → fairfuzzcd | -2 | -8.1% | 3 | ❌ Still negative. libpng: 1 reset → coverage 1072→44 (-95.9%). php/exif: 3→1 bugs. |
+| honggfuzz → honggfuzzcd | **-16** | **-62.6%** | **761** | ❌ Catastrophic. 7036 drifts, 36 resets/24h/program, cascade loop. |
+
+Root-cause analysis (see DECISIONS.md §dist2 analysis):
+1. honggfuzzcd (CRITICAL): WINDOW=100 is 3ms at 2M exec/min. THRESHOLD=0.05 requires 300 new edges
+   per 3ms window (never met at steady state). Every window is a stagnation event → resets fire every
+   ~15ms → 7036 drifts, 761 resets. Additional: output/ file count is non-monotonic (corpus
+   minimization shrinks it), making every minimization cycle look like stagnation.
+   Fix: (a) use peak-ever corpus count (monotone metric) in driftCycle(); (b) scale WINDOW by exec rate.
+2. fairfuzzcd (ONGOING): Corpus reset destroys FairFuzz's rare-branch memory. After resetting to 5 seeds,
+   FairFuzz can't re-cover the rare branches it took hours to find. Single reset on libpng wiped
+   1000 queue entries, fuzzer recovered only 44. php/exif lost PHP009+PHP004 triggers.
+   Fix: CONSECUTIVE=15 (very rare resets) to avoid destructive reset during productive phases.
+3. aflcd (MILD): php/json=3 resets, php/unserialize=3 resets. COOLDOWN=10 insufficient to prevent
+   cascade. Each reset removes queue progress, fuzzer rebuilds to same plateau, fires again.
+   Fix: COOLDOWN=25.
+4. aflpluspluscd (NEUTRAL): 268 drifts but 94.8% guard-filtered → 14 resets. AFL++'s internal adaptive
+   mechanisms (cmp coverage, laf-intel) already handle local optima; CD resets give marginal benefit.
+
+Why the winners win:
+- moptaflcd: MOpt PSO converges to local mutation-operator optima. Resets force PSO to restart from
+  fresh seeds, exploring different operator combinations. 33 resets spread across 16/21 programs
+  (sweet spot: 1-5 resets each), each firing after genuine stagnation.
+- aflfastcd: AFLFast's power schedule converges to narrow high-priority paths. 5 well-placed resets
+  break power-schedule bias, redistributing execution across paths. Very low reset rate means
+  each reset is high-signal.
 
