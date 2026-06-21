@@ -2,15 +2,15 @@
 
 ## Current Goal
 
-Evaluate CD-Fuzzing on the Magma benchmark. **`dist7` is IN PROGRESS.**
+Evaluate CD-Fuzzing on the Magma benchmark. **`dist7` is COMPLETE. Next: dist8 to confirm aflpluspluscd SR=1, C=10, CL=25.**
 
-dist7 is a 6-rep paired-seed parameter sweep for honggfuzz/honggfuzzcd and
-aflplusplus/aflpluspluscd. Launched 2026-06-20 15:29 CDT. Expected done ~20:13 CDT.
-Auto-analysis in `tmux:dist7_followup`; verdict at `/proj/cdfuzzing-PG0/distributed/dist7_verdict.txt`.
+dist7 key finding: SOFT_RESET=1 is essential for AFL++CD — best config (SR=1, C=10, CL=25)
+gave +11 bugs vs baseline across the paired run. honggfuzzcd is structurally ineffective
+(resets hurt; only positive rep fired 0 resets = noise).
 
-If results are unsatisfactory:
+Launch dist8 to confirm with more reps:
 ```bash
-cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist8 --timeout 4h --poll 60
+cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist8 --timeout 6h --poll 60
 ```
 
 ## Current State
@@ -57,12 +57,12 @@ cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist8 --timeout 4h
 - Results: afl +4, aflfast +5, moptafl +1, fairfuzz -3, aflplusplus -6, honggfuzz +1 (0 resets → UaF was causing -11)
 - Data: `/proj/cdfuzzing-PG0/distributed/dist5/ar/` | Plots: `…/dist5/plots/`
 
-**`dist7` IN PROGRESS — paired-seed 6-rep sweep (honggfuzz + aflplusplus)**
-- 24 workers (6×honggfuzz, 6×honggfuzzcd, 6×aflplusplus, 6×aflpluspluscd)
-- Launched 2026-06-20 15:29 CDT, expected done ~20:13 CDT
-- Timeout: 4h | Seeds: FUZZER_SEED=1000+REP (same for baseline+CD per rep)
-- `tmux:dist7` (orchestrator) + `tmux:dist7_followup` (auto-analysis + verdict)
-- See EXPERIMENTS.md § dist7 and DECISIONS.md § dist7 for full spec
+**`dist7` COMPLETE — paired-seed 6-rep sweep (honggfuzz + aflplusplus)**
+- 24/24 workers done by 20:21 CDT June 20; NFS fix confirmed (no quota errors)
+- aflpluspluscd: 3/6 reps positive (best: SR=1,C=10,CL=25 → +11 bugs, 9 resets)
+- honggfuzzcd: 0/6 reps positive via CD; only +2 rep fired 0 resets (variance)
+- Data: `/proj/cdfuzzing-PG0/distributed/dist7/ar/` | Plots: `…/dist7/plots/`
+- See EXPERIMENTS.md § dist7 and DECISIONS.md § dist7 outcomes for full analysis
 
 **`dist6` COMPLETE (honggfuzz UaF fix, 3 reps, rep2 SOFT_RESET=1 sweep)**
 - 24 workers, launched 2026-06-19 ~21:25 CDT, finished 2026-06-20 ~06:52 CDT

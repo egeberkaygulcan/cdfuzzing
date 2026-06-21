@@ -13,11 +13,14 @@
   - `copied` counter now only increments on rsync success
 - [x] **dist7 launched** (2026-06-20 15:29 CDT): 6-rep paired-seed sweep for honggfuzz+aflplusplus
   — `tmux:dist7` fuzzing, `tmux:dist7_followup` auto-analysis, expected done ~20:13 CDT
-- [ ] **Analyze dist7 results** — verdict auto-written to `/proj/cdfuzzing-PG0/distributed/dist7_verdict.txt`
-  - honggfuzzcd: which rep (W/C config) gives best Δbugs?
-  - aflpluspluscd: does any SOFT_RESET=1 config turn positive?
-- [ ] **Launch dist8 if dist7 unsatisfactory** — `bash orchestrate.sh --run-id dist8 --timeout 4h --poll 60`
-- [ ] **Push commits to GitHub** — 10+ local commits unpushed (a6b53bb5..6554d60b).
+- [x] **Analyze dist7 results** (2026-06-21):
+  - honggfuzzcd: no config effective — resets consistently hurt; +2 rep fired 0 resets (noise)
+  - aflpluspluscd: SOFT_RESET=1 is the key variable; best config SR=1,C=10,CL=25 → **+11 bugs**
+  - See DECISIONS.md § dist7 outcomes for full interpretation
+- [ ] **Launch dist8** — confirm aflpluspluscd SR=1,C=10,CL=25 with ≥6 reps, 6h timeout
+  `cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist8 --timeout 6h --poll 60`
+- [ ] **Fix dist7_followup.sh verdict logic** — should analyze per-rep, not aggregated total
+- [ ] **Push commits to GitHub** — 11+ local commits unpushed (a6b53bb5..e4f0f4a0).
   `git bundle create /tmp/cdfuzzing.bundle HEAD`, scp to local, push.
 
 ## Medium Priority

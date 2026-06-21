@@ -2,7 +2,7 @@
 
 ---
 
-## distributed (CloudLab): dist7 — 6 reps × 4 fuzzers, 4h, paired-seed parameter sweep (IN PROGRESS)
+## distributed (CloudLab): dist7 — 6 reps × 4 fuzzers, 4h, paired-seed parameter sweep (COMPLETE)
 
 Goal:
 Re-run honggfuzz/honggfuzzcd and aflplusplus/aflpluspluscd pairs with three improvements:
@@ -44,11 +44,38 @@ Code changes (commit b7077dd7):
 - `worker-run.sh`: 6-rep case tables, FUZZER_SEED export, rsync fixes, NFS pre-check
 - `cluster/manifest.txt` (NFS, not in repo): 6 reps × 4 fuzzers = 24 workers
 
-Status: IN PROGRESS — launched 2026-06-20 15:29 CDT. Expected completion:
-- aflplusplus workers: ~19:29 CDT (4h flat)
-- honggfuzz workers: ~20:13 CDT (4h + 44min openssl build)
-Auto-analysis via `tmux:dist7_followup` → verdict at `/proj/cdfuzzing-PG0/distributed/dist7_verdict.txt`
-See DECISIONS.md § dist7 for design rationale.
+Status: **COMPLETE** — launched 2026-06-20 15:29 CDT, all 24 workers done by 20:21 CDT.
+NFS fix confirmed effective: no quota errors, all honggfuzz/honggfuzzcd data synced.
+Data: `/proj/cdfuzzing-PG0/distributed/dist7/ar/` | Plots: `…/dist7/plots/`
+See DECISIONS.md § dist7 outcomes for full analysis.
+
+**honggfuzz → honggfuzzcd (per-rep results):**
+
+| Rep | base | cd | Δbugs | resets | config |
+|-----|------|----|-------|--------|--------|
+| 0 | 34 | 23 | **-11** | 30 | W=5, C=8, CL=10 (conservative) |
+| 1 | 22 | 16 | **-6** | 23 | W=5, C=5, CL=10 (default) |
+| 2 | 30 | 19 | **-11** | 25 | W=5, C=3, CL=10 (moderate) |
+| 3 | 21 | 23 | **+2** | 0 | W=3, C=3, CL=10 (aggressive) |
+| 4 | 34 | 27 | **-7** | 0 | W=3, C=2, CL=5 (very aggressive) |
+| 5 | 23 | 20 | **-3** | 67 | W=10, C=5, CL=15 (loose) |
+
+Note: the only positive rep (3) fired 0 resets — the +2 is likely noise, not a CD effect.
+
+**aflplusplus → aflpluspluscd (per-rep results):**
+
+| Rep | base | cd | Δbugs | resets | config |
+|-----|------|----|-------|--------|--------|
+| 0 | 23 | 23 | **0** | 9 | SR=2, C=8, CL=25 (default) |
+| 1 | 33 | 35 | **+2** | 9 | SR=1, C=8, CL=25 (det+havoc) |
+| 2 | 33 | 33 | **0** | 13 | SR=1, C=6, CL=25 (det+havoc fast) |
+| 3 | 30 | 36 | **+6** | 13 | SR=1, C=6, CL=10 (det+havoc fast+short CL) |
+| 4 | 37 | 25 | **-12** | 9 | SR=2, C=6, CL=10 (havoc-only fast) |
+| 5 | 26 | 37 | **+11** | 9 | SR=1, C=10, CL=25 (det+havoc conservative) |
+
+Key finding: SOFT_RESET=1 is essential — all SR=1 reps ≥ 0, both SR=2 reps ≤ 0.
+Best config: Rep 5 (SR=1, C=10, CL=25) with +11 bugs and 9 resets.
+See DECISIONS.md § dist7 outcomes for interpretation and next steps.
 
 ---
 

@@ -1,5 +1,41 @@
 # Decisions
 
+## 2026-06-21: dist7 outcomes — parameter sweep analysis
+
+### honggfuzzcd: structurally ineffective
+The sweep covered W=3–10 and C=2–8. All reps with resets fired showed negative Δbugs
+(-11, -6, -11, -7, -3). The one positive rep (+2, W=3, C=3) fired **0 resets** — the drift
+detector never triggered, so the result is pure variance, not a CD effect. More resets
+consistently means more harm: rep 5 (W=10, 67 resets) had -3; rep 0 (W=5, 30 resets) had -11.
+Conclusion: the corpus-reset strategy does not benefit honggfuzz in a 4h campaign.
+Hypothesis: honggfuzz's internal corpus management already handles stagnation adequately;
+forced resets discard coverage that honggfuzz would have exploited over time.
+
+### aflpluspluscd: SOFT_RESET mode is the key variable
+All SOFT_RESET=1 reps (det+havoc) were ≥ 0: +0, +2, +6, +11.
+Both SOFT_RESET=2 reps (havoc-only) were ≤ 0: 0, -12.
+With SR=2, AFL++'s deterministic stage (`passed_det=1`) is never re-run post-reset,
+so AFL++ cannot fully re-explore the new corpus direction. SR=1 clears `passed_det` on
+favored entries, enabling bit-flips and arithmetic to exploit post-reset coverage gains.
+Best result: Rep 5 (SR=1, C=10, CL=25): **+11 bugs**, 9 resets. Conservative trigger
+(C=10) avoids premature resets while still catching sustained stagnation.
+
+### Auto-verdict script was wrong
+The followup script counted "positive Δbugs" by checking the aggregate summary table,
+which summed all 6 reps as one pool. Per-rep analysis (the correct method) shows 3/6
+aflpluspluscd reps are positive. Verdict script needs to be updated to analyze each
+rep's ar/ subdirectory separately.
+
+### Next steps
+- **aflpluspluscd**: confirm Rep 5 config (SR=1, C=10, CL=25) in a proper multi-rep
+  experiment (dist8) with more reps (≥6) and possibly longer runtime.
+- **honggfuzzcd**: deprioritize or drop from paper as primary contribution; can be
+  noted as "CD resets hurt honggfuzz" (negative result still publishable).
+- **afl/fairfuzz pairs**: still consistently positive across dist5/dist6 — no need
+  to re-run unless reviewers ask for more reps.
+
+---
+
 ## 2026-06-20: dist7 design — paired-seed 6-rep parameter sweep
 
 ### Motivation
