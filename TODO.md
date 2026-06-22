@@ -23,7 +23,10 @@
 - [x] ⚠ **dist9 INVALID** (2026-06-22, post-mortem): only worker .16 had the honggfuzz fix; workers .17–.33 were at c85513f6 (dist7 code). Results cannot be trusted.
 - [x] **orchestrate.sh fixed**: now does `git pull --ff-only` on each worker before running worker-run.sh
 - [x] **All 24 workers pulled to 65fc953b** (2026-06-22, manually)
-- [ ] **Launch dist10** — re-run dist9 design now that all workers have correct code; same params (honggfuzz C=2–10 sweep + AFL++ 4× C=12 confirm)
+- [ ] **Launch dist10** — 61-node cluster READY (60 workers, 12 fuzzers × 5 reps, all at `735e8d89`,
+  SSH fixed via sshd drop-in). honggfuzzcd runs reps 0–4 (C=2,3,5,8,10 sweep; rep 5 / C=3,CL=3
+  not covered at 5 reps/fuzzer). All other CD fuzzers use confirmed best params, all reps identical.
+  Launch: `cd /local/repository/cloudlab && tmux new-session -d -s dist10 "bash orchestrate.sh --run-id dist10 --timeout 8h"`
 - [ ] **Fix dist7_followup.sh verdict logic** — should analyze per-rep, not aggregated total
 - [ ] **Update paper draft** with final configs: AFL++CD SR=1,C=12,CL=25 → +6 bugs on Magma; honggfuzz CD negative result section
 

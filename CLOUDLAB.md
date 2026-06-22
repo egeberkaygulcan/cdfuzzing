@@ -5,18 +5,19 @@ replaces the single-machine, sequential-batch workflow (seed_4) with one node
 per (fuzzer × repetition), dispatched and merged from a central head node.
 
 > Status (2026-06-22): **Cluster ready for dist10.** Current cluster: Wisconsin,
-> 25 nodes (head + 24 workers, `192.168.1.1` + `.10–.33`), 4 fuzzers × 6 reps
-> (honggfuzz, honggfuzzcd, aflplusplus, aflpluspluscd). All workers at commit
-> `54b69655`. Next: dist10 (honggfuzz C/CL sweep + AFL++ confirmation, 8h).
+> 61 nodes (head + 60 workers, `192.168.1.1` + `.10–.69`), 12 fuzzers × 5 reps
+> (all baselines + all CD variants). All workers at commit `735e8d89`.
+> Next: dist10 (full 12-fuzzer × 5-rep run, 8h).
 >
-> For a **full 12-fuzzer run**: create a new CloudLab experiment with
-> `fuzzerSet=all`, `nodesPerFuzzer=6` → 73 nodes. Run setup-node.sh head first,
-> then `orchestrate.sh --run-id distN --timeout 8h`.
+> For a **full 12-fuzzer 6-rep run**: use `fuzzerSet=all`, `nodesPerFuzzer=6` → 73
+> nodes. Run setup-node.sh head first, then `orchestrate.sh --run-id distN --timeout 8h`.
 >
 > Known fixed issues: boot-time quoting bug (profile.py), Docker data-root overflow
 > (moved to /mydata), NFS *.honggfuzz.cov quota (rsync exclude), silent rsync
 > failures, workers never git-pulled before dispatch (orchestrate.sh now does
-> `git checkout -- . && git pull --ff-only` on each worker before running).
+> `git checkout -- . && git pull --ff-only` on each worker before running),
+> **Emulab keymgmt wipes cluster SSH key** (setup-node.sh now writes cluster pubkey
+> to `/etc/ssh/cdfuzz_authorized_keys` + sshd drop-in, immune to Emulab key sync).
 
 ## What it provisions
 

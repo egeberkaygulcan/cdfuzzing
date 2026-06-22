@@ -2,6 +2,64 @@
 
 ---
 
+## Issue: Emulab keymgmt daemon wipes cluster SSH key after setup-node.sh runs (2026-06-22)
+
+Symptoms:
+- `ssh eldarfin@<worker-ip>` returns `Permission denied (publickey)` immediately after
+  provisioning, even though setup-node.sh reported success on all workers.
+- All 60 workers unreachable despite `0/60` failure count in the SSH loop.
+
+Root cause:
+Emulab's per-node `keymgmt` daemon regenerates `~/.ssh/authorized_keys` and
+`~/.ssh/id_rsa` with per-node keys after `setup-node.sh` runs. Because
+`/users/<user>` is **local per node** (not NFS-shared), each worker has its own
+`~/.ssh/`. The daemon's overwrite silently removes the cluster pubkey we appended,
+replacing it with only Emulab-managed keys (`rsa@emulab.net`, `sslcert:*`, and the
+node's own generated keypair). The grep-dedup guard in setup-node.sh is irrelevant
+because the file is rewritten wholesale after setup completes.
+
+Temporary fix (apply to live cluster as root):
+```bash
+CLUSTER_PUB=$(cat /proj/cdfuzzing-PG0/cluster/ssh/id_rsa.pub)
+while read -r name ip fuzzer rep; do
+    case "$name" in ''|'#'*|head) continue;; esac
+    sudo ssh -o StrictHostKeyChecking=no root@"$ip" \
+        "grep -qxF '$CLUSTER_PUB' /users/eldarfin/.ssh/authorized_keys \
+         || echo '$CLUSTER_PUB' >> /users/eldarfin/.ssh/authorized_keys; echo done" \
+        </dev/null
+done < /proj/cdfuzzing-PG0/cluster/manifest.txt
+```
+Note: `</dev/null` on the SSH call is essential — without it, SSH consumes the
+manifest's stdin and the loop processes only the first worker.
+
+Permanent fix (committed in `735e8d89`):
+`setup-node.sh` now writes the cluster pubkey to `/etc/ssh/cdfuzz_authorized_keys`
+(root-owned; Emulab never touches files under `/etc/ssh/`) and adds
+`/etc/ssh/sshd_config.d/cdfuzz.conf` with:
+```
+AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/cdfuzz_authorized_keys
+```
+sshd then accepts the cluster key regardless of what Emulab does to `~/.ssh/`.
+
+Apply to live cluster (run once as root on head):
+```bash
+CLUSTER_PUB=$(cat /proj/cdfuzzing-PG0/cluster/ssh/id_rsa.pub)
+while read -r name ip fuzzer rep; do
+    case "$name" in ''|'#'*|head) continue;; esac
+    sudo ssh -o StrictHostKeyChecking=no root@"$ip" \
+        "printf '%s\n' '$CLUSTER_PUB' > /etc/ssh/cdfuzz_authorized_keys && \
+         chmod 644 /etc/ssh/cdfuzz_authorized_keys && \
+         mkdir -p /etc/ssh/sshd_config.d && \
+         ( [ -f /etc/ssh/sshd_config.d/cdfuzz.conf ] || \
+           ( printf 'AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/cdfuzz_authorized_keys\n' \
+               > /etc/ssh/sshd_config.d/cdfuzz.conf && \
+             systemctl reload sshd 2>/dev/null || true ) ) && echo done" \
+        </dev/null
+done < /proj/cdfuzzing-PG0/cluster/manifest.txt
+```
+
+---
+
 ## Issue: Docker socket not available on fresh CloudLab node
 
 Symptoms:
