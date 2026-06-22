@@ -110,6 +110,13 @@ pc.defineParameter("sharedDir", "Shared merge directory (project NFS)",
                    longDescription="Project NFS share mounted on every node; merged results and "
                                    "DONE markers are written under here.")
 
+pc.defineParameter("aggregate", "CloudLab site (aggregate URN)",
+                   portal.ParameterType.STRING,
+                   "urn:publicid:IDN+wisc.cloudlab.us+authority+cm", advanced=True,
+                   longDescription="Site to allocate all nodes on. Must match the site where "
+                                   "/proj/cdfuzzing-PG0 NFS was created (Wisconsin). Leave as-is "
+                                   "unless you have migrated the project storage to another site.")
+
 pc.defineParameter("bestEffort", "Best-effort LAN (ignore bandwidth)",
                    portal.ParameterType.BOOLEAN, True, advanced=True,
                    longDescription="Recommended for large node counts so the LAN maps even when "
@@ -164,6 +171,8 @@ def make_node(name, ip):
         node.disk_image = params.osImage
     if params.phystype != "":
         node.hardware_type = params.phystype
+    if params.aggregate != "":
+        node.Site(params.aggregate)
     bs = node.Blockstore(name + "-bs", "/mydata")
     bs.size = "0GB" if params.blockstoreMax else (str(params.blockstoreSize) + "GB")
     bs.placement = "any"
