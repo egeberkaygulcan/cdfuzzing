@@ -24,8 +24,8 @@
 - [x] **orchestrate.sh fixed**: now does `git pull --ff-only` on each worker before running worker-run.sh
 - [x] **All 24 workers pulled to 65fc953b** (2026-06-22, manually)
 - [ ] **Launch dist10** — 61-node cluster READY (60 workers, 12 fuzzers × 5 reps, all at `735e8d89`,
-  SSH fixed via sshd drop-in). honggfuzzcd runs reps 0–4 (C=2,3,5,8,10 sweep; rep 5 / C=3,CL=3
-  not covered at 5 reps/fuzzer). All other CD fuzzers use confirmed best params, all reps identical.
+  SSH fixed via sshd drop-in). All CD fuzzers now use confirmed best params (all reps identical):
+  honggfuzzcd fixed at W=5,C=2,CL=5 (dist9 rep0 best; over-reset at C=3+; never fires at C≥8).
   Launch: `cd /local/repository/cloudlab && tmux new-session -d -s dist10 "bash orchestrate.sh --run-id dist10 --timeout 8h"`
 - [ ] **Fix dist7_followup.sh verdict logic** — should analyze per-rep, not aggregated total
 - [ ] **Update paper draft** with final configs: AFL++CD SR=1,C=12,CL=25 → +6 bugs on Magma; honggfuzz CD negative result section

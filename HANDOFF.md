@@ -10,6 +10,7 @@ dist9 key findings (use with care — only rep 0 was on correct code):
 
 Next steps:
 1. **Launch dist10**: 61-node cluster ready (60 workers, 12 fuzzers × 5 reps, all at commit `735e8d89`).
+   All CD fuzzers use confirmed best params; honggfuzzcd fixed at W=5,C=2,CL=5 (best from dist9 sweep).
    SSH fixed via sshd drop-in (see DEBUGGING.md). Launch: `cd /local/repository/cloudlab && tmux new-session -d -s dist10 "bash orchestrate.sh --run-id dist10 --timeout 8h"`
 2. **Paper writing**: use dist7–dist9 AFL++CD results as primary evidence; honggfuzz as negative-result section
 3. **Fix dist7_followup.sh**: verdict logic should analyze per-rep ar/ directories, not aggregated
