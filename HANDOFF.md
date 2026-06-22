@@ -2,15 +2,16 @@
 
 ## Current Goal
 
-Evaluate CD-Fuzzing on the Magma benchmark. **`dist8` is COMPLETE. Next: fix honggfuzz C/CL bug → dist9.**
+Evaluate CD-Fuzzing on the Magma benchmark. **`dist9` is COMPLETE. Evaluation is done.**
 
-dist8 key findings:
-1. **aflpluspluscd SR=1, C=10, CL=25 confirmed positive**: mean +1.8 bugs across 4 reps (range −1 to +4). C=12 boundary gave best single result (+8, 9 resets). **Recommended final config: SR=1, C=12, CL=25.**
-2. **honggfuzz critical code bug**: `drift_init()` never reads `AFL_DRIFT_CONSECUTIVE` or `AFL_DRIFT_COOLDOWN`. All C/CL sweeps in dist3–dist8 were no-ops. Only WINDOW was ever effective for honggfuzz.
+dist9 key findings:
+1. **aflpluspluscd SR=1, C=12, CL=25 confirmed**: +6 unique bugs over AFL++ baseline (34→40) across 21 Magma programs. Guard filters 95% of drifts. **This is the paper-ready final config.**
+2. **honggfuzz CD negative result accepted**: First real C/CL sweep (after bug fix) shows no beneficial configuration. Hard-reset incompatibility is the root cause. Publishable as negative result.
 
 Next steps:
-1. **smoke9**: verify the drift-detect.c fix — ssh to 192.168.1.16, `git pull`, run honggfuzzcd sqlite3 20min with C=2; check `drift_log.csv` shows consecutive_drifts gate working
-2. **dist9**: honggfuzz C/CL sweep (C=2/3/5/8/10/3, W=5, now working) + 4× confirm aflpluspluscd SR=1,C=12,CL=25
+1. **Paper writing**: use dist7–dist9 AFL++CD results as primary evidence; honggfuzz as negative-result section
+2. **Fix dist7_followup.sh**: verdict logic should analyze per-rep ar/ directories, not aggregated
+3. **Optional**: run afl/fairfuzz/moptafl/aflfast with confirmed best params for completeness
 
 ## Current State
 
@@ -55,6 +56,19 @@ Next steps:
 - 24 workers, launched 2026-06-19 12:39 CDT, finished 2026-06-19 ~21:23 CDT
 - Results: afl +4, aflfast +5, moptafl +1, fairfuzz -3, aflplusplus -6, honggfuzz +1 (0 resets → UaF was causing -11)
 - Data: `/proj/cdfuzzing-PG0/distributed/dist5/ar/` | Plots: `…/dist5/plots/`
+
+**`dist9` COMPLETE — 6-rep honggfuzz C/CL sweep + AFL++ C=12 confirmation**
+- 24/24 workers done 2026-06-22 01:25 CDT; 0 failures
+- aflpluspluscd SR=1,C=12,CL=25: **+6 unique bugs** (34→40 across 21 programs); guard 95.2% effective
+- honggfuzzcd: **−4 unique bugs** (33→29); no C/CL config helps; negative result accepted
+- Data: `/proj/cdfuzzing-PG0/distributed/dist9/ar/` | Plots: `…/dist9/plots/`
+- See EXPERIMENTS.md § dist9 and DECISIONS.md § dist9 outcomes for full analysis
+
+**`dist8` COMPLETE — AFL++ confirmation + honggfuzz ultra-conservative sweep**
+- 24/24 workers done 2026-06-21 13:14 CDT
+- aflpluspluscd: mean +1.8 bugs (C=10, 4 reps); C=12 gave +8 (best single rep)
+- honggfuzzcd: C/CL code bug discovered (drift_init never read env vars)
+- Data: `/proj/cdfuzzing-PG0/distributed/dist8/ar/` | Plots: `…/dist8/plots/`
 
 **`dist7` COMPLETE — paired-seed 6-rep sweep (honggfuzz + aflplusplus)**
 - 24/24 workers done by 20:21 CDT June 20; NFS fix confirmed (no quota errors)

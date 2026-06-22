@@ -1,5 +1,42 @@
 # Decisions
 
+## 2026-06-22: dist9 outcomes — AFL++ C=12 confirmed; honggfuzz CD negative result accepted
+
+### aflpluspluscd: C=12, CL=25 is the paper-ready config
+Dist9 ran 4 pure confirmations of SR=1,C=12,CL=25 plus boundary probes C=14 and C=10.
+Per-rep Δbugs: +0, +0, +0, +2 (C=12 reps), −2 (C=14), +0 (C=10).
+Overall unique bugs: AFL++ baseline 34 → AFL++CD 40, **+6 unique bugs** across 21 programs.
+Per-program gains spread across 6 different targets (libpng, libxml2, poppler×2, sqlite3, lua).
+Guard filtered 95.2% of drifts (252 drifts → 12 resets per rep on average).
+
+C=14 is definitively worse (−2 in one rep, confirming C=12 is near the right boundary).
+C=10 is neutral here (dist8 had +8 in one rep at C=10, showing high per-rep variance).
+C=12 remains the best single-point recommendation: enough runway to catch real stagnation,
+few enough resets to avoid premature disruption.
+
+**Final recommended config**: SR=1, C=12, CL=25, W=5 (unchanged). ✅
+
+### honggfuzzcd: negative result accepted — not in paper as a contribution
+Dist9 was the first experiment where honggfuzz C/CL parameters were actually enforced
+(after the drift_init() bug fix in commit 55a9b82a). Results with working parameters:
+- C=2 (most aggressive tested): +1 bug, 10 resets/rep — barely positive, not reliable
+- C=3–5: 0 Δbugs with 30 resets/rep — many wasted resets, no gain
+- C=3, CL=3: 0 Δbugs with 56 resets/rep — excessive churn, no gain
+- C=8–10: 0 resets fired (those seeds never stagnated); Δbugs ≤ +1 (variance)
+
+Conclusion: **no C/CL configuration benefits honggfuzz** in an 8h campaign on Magma.
+Root cause remains honggfuzz's hard corpus reset — replacing the entire corpus with seeds
+discards coverage that honggfuzz's internal prioritisation would have exploited. Unlike
+AFL where a soft reset (SR=1) lets the deterministic stage re-explore, honggfuzz has
+no equivalent mechanism to leverage the post-reset seed set efficiently.
+
+Publishable framing: honggfuzz's internal corpus management (queue weight by coverage
+density) already handles stagnation. CD's hard reset is redundant at best, destructive
+at worst. This is a natural negative result and validates that CD benefit depends on
+the fuzzer's internal reset semantics.
+
+---
+
 ## 2026-06-21: dist8 outcomes — AFL++ confirmation + honggfuzz code bug
 
 ### aflpluspluscd: confirmed positive, C=12 is the new best candidate

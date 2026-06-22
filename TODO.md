@@ -19,13 +19,10 @@
   - See DECISIONS.md § dist7 outcomes for full interpretation
 - [x] **dist8 COMPLETE** (2026-06-21 13:14 CDT): aflpluspluscd confirmed +1.8 avg (C=10); C=12 gave +8 (best); honggfuzz C/CL bug discovered
 - [x] **Fix honggfuzz drift-detect.c**: `drift_init()` now reads `AFL_DRIFT_CONSECUTIVE`/`AFL_DRIFT_COOLDOWN`; `drift_check_value()` enforces consecutive/cooldown gate
-- [ ] **Run smoke9** — verify fix: honggfuzzcd sqlite3, 20min, C=2 CL=3; check `drift_log.csv` shows consecutive_drifts counting to threshold before reset fires
-  ```bash
-  ssh 192.168.1.16 "cd /local/repository && git pull && bash cloudlab/worker-run.sh --fuzzer honggfuzzcd --rep 0 --run-id smoke9 --timeout 20m --targets sqlite3"
-  ```
-- [ ] **Launch dist9** — honggfuzz C=2–10 sweep (C/CL now working) + AFL++ 4× confirm SR=1,C=12,CL=25, 8h
-  `cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist9 --timeout 8h --poll 60`
+- [x] **smoke9 PASSED** (2026-06-21 ~16:47 CDT): consecutive_drifts counted 0→1→0 (reset at C=2), cooldown 5→0, corpus reset confirmed (queue 814→105)
+- [x] **dist9 COMPLETE** (2026-06-22 01:25 CDT, 24/24, 0 failed): AFL++CD +6 bugs (C=12 confirmed); honggfuzz CD −4 bugs (negative result accepted)
 - [ ] **Fix dist7_followup.sh verdict logic** — should analyze per-rep, not aggregated total
+- [ ] **Update paper draft** with final configs: AFL++CD SR=1,C=12,CL=25 → +6 bugs on Magma; honggfuzz CD negative result section
 
 ## Medium Priority
 

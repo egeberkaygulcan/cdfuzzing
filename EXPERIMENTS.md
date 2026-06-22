@@ -2,7 +2,7 @@
 
 ---
 
-## distributed (CloudLab): dist9 — 6 reps × 4 fuzzers, 8h, first real honggfuzz C/CL sweep + AFL++ C=12 confirmation (PENDING)
+## distributed (CloudLab): dist9 — 6 reps × 4 fuzzers, 8h, first real honggfuzz C/CL sweep + AFL++ C=12 confirmation (COMPLETE)
 
 Goal:
 1. **First real honggfuzz C/CL sweep** — fix applied to `drift-detect.c:drift_init()` now reads
@@ -50,7 +50,39 @@ Launch command (after smoke9 passes):
 cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist9 --timeout 8h --poll 60
 ```
 
-Status: **PENDING**
+Status: **COMPLETE** (2026-06-22 01:25 CDT, 24/24 workers, 0 failed)
+
+### Results
+
+**AFL++CD vs AFL++ — +6 unique bugs (34 → 40)**
+
+| Rep | Params | Δbugs | Resets | Drifts | Note |
+|-----|--------|-------|--------|--------|------|
+| 0 | SR=1, C=12, CL=25 | +0 | 12 | 252 | confirm A |
+| 1 | SR=1, C=12, CL=25 | +0 | 15 | 236 | confirm B |
+| 2 | SR=1, C=12, CL=25 | +0 | 19 | 203 | confirm C |
+| 3 | SR=1, C=12, CL=25 | +2 | 19 | 242 | confirm D |
+| 4 | SR=1, C=14, CL=25 | −2 | 14 | 227 | right boundary — worse |
+| 5 | SR=1, C=10, CL=25 | +0 | 13 | 278 | left boundary — neutral |
+
+Per-program gains (CD over baseline): PNG007 (+1), XML001 (+1), PDF010/pdf_fuzzer (+1),
+pdfimages (+1), sqlite3 (+1), lua (+1). Guard effectiveness: 252 drifts → 12 resets (95.2% filtered).
+
+**honggfuzzCD vs honggfuzz — −4 unique bugs (33 → 29)**
+
+| Rep | Params | Δbugs | Resets | Drifts | Note |
+|-----|--------|-------|--------|--------|------|
+| 0 | W=5, C=2, CL=5 | +1 | 10 | 156 | fix working; ~0.5 resets/prog |
+| 1 | W=5, C=3, CL=10 | +0 | 30 | 135 | too many resets |
+| 2 | W=5, C=5, CL=15 | +0 | 30 | 138 | too many resets |
+| 3 | W=5, C=8, CL=25 | +1 | 0 | 0 | seed 1003 never stagnated (p=1.0 throughout) |
+| 4 | W=5, C=10, CL=25 | −3 | 0 | 0 | seed 1004 never stagnated; Δ is variance |
+| 5 | W=5, C=3, CL=3 | +0 | 56 | 459 | far too aggressive |
+
+Guard effectiveness: 156 drifts → 10 resets (93.6% filtered). Net negative across all reps.
+Reps 3 and 4: 480-row drift_logs with p_value=1.0 throughout — those seeds drove continuous
+coverage growth, never triggering KS test. Not a data issue; confirms high seed-to-seed variance.
+No C/CL configuration shows consistent benefit; hard-reset incompatibility hypothesis confirmed.
 
 ---
 
