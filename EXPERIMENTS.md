@@ -2,6 +2,43 @@
 
 ---
 
+## distributed (CloudLab): dist10 — 12 fuzzers × 5 reps × 24h, full paper run (RUNNING)
+
+Goal: **Publication-quality comparative evaluation** of all 6 CD-fuzzer variants against their
+baselines. First run with (a) all 12 fuzzers, (b) confirmed best params for every fuzzer,
+(c) 5 independent repetitions, (d) 24h campaigns, (e) paired-seed design throughout.
+
+Design:
+- 61 nodes: 1 head + 60 workers (12 fuzzers × 5 reps), IPs 192.168.1.10–.69
+- Paired seeds: baseline_N and CDvariant_N share `FUZZER_SEED=1000+N` (N=0–4)
+- All workers at commit `1bfa67b2`; SSH via sshd drop-in (Emulab keymgmt fix)
+- Targets: sqlite3, libpng, lua, libsndfile, libtiff, libxml2, poppler, php, openssl (21 programs)
+
+CD parameters (confirmed best from dist2–dist9):
+
+| Fuzzer | W | C | CL | SR | Evidence |
+|---|---|---|---|---|---|
+| aflcd | 100 | 3 | 10 | 1 | dist2 +3 bugs; dist5 +4 bugs |
+| aflpluspluscd | 100 | 12 | 25 | 1 | dist7–dist9: +11/+8/+6 bugs |
+| fairfuzzcd | 100 | 3 | 10 | 1 | dist2 corrected; dist6 +1 bug |
+| moptaflcd | 100 | 5 | 10 | 1 | dist2 +6 bugs; dist5 +1 bug |
+| aflfastcd | 100 | 3 | 10 | 1 | dist2 +5 bugs; dist5 +5 bugs |
+| honggfuzzcd | 5 | 2 | 5 | 2 | dist9 rep0: +1 bug, 10 resets |
+
+Launch: `tmux:dist10`, 2026-06-22 07:43 CDT.
+Expected finish: 2026-06-23 ~07:45 CDT.
+Orch log: `/proj/cdfuzzing-PG0/distributed/dist10_orch.log`
+Results: `/proj/cdfuzzing-PG0/distributed/dist10/ar/`
+Plots: `/proj/cdfuzzing-PG0/distributed/dist10/plots/`
+
+Status: **RUNNING**
+
+### Results
+
+*(pending — expected 2026-06-23 ~07:45 CDT)*
+
+---
+
 ## distributed (CloudLab): dist9 — 6 reps × 4 fuzzers, 8h, first real honggfuzz C/CL sweep + AFL++ C=12 confirmation (⚠ INVALID)
 
 Goal:

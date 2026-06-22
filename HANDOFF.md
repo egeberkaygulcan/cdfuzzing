@@ -2,17 +2,20 @@
 
 ## Current Goal
 
-Evaluate CD-Fuzzing on the Magma benchmark. **`dist9` was INVALID; `dist10` is the next run.**
+Evaluate CD-Fuzzing on the Magma benchmark. **`dist10` is RUNNING** (launched 2026-06-22 07:43 CDT).
+
+dist10 is the full paper-quality run: 12 fuzzers × 5 reps × 24h, all confirmed best params.
+Expected completion: **2026-06-23 ~07:45 CDT**. Monitor: `tmux attach -t dist10` or
+`tail -f /proj/cdfuzzing-PG0/distributed/dist10_orch.log`.
 
 dist9 key findings (use with care — only rep 0 was on correct code):
 1. **aflpluspluscd SR=1, C=12, CL=25 confirmed**: +6 unique bugs over AFL++ baseline (34→40) across 21 Magma programs. Guard filters 95% of drifts. **This is the paper-ready final config.**
-2. **honggfuzz CD negative result accepted**: First real C/CL sweep (after bug fix) shows no beneficial configuration. Hard-reset incompatibility is the root cause. Publishable as negative result.
+2. **honggfuzz CD best config W=5,C=2,CL=5**: +1 bug in dist9 rep0; marginal positive result.
 
 Next steps:
-1. **Launch dist10**: 61-node cluster ready (60 workers, 12 fuzzers × 5 reps, all at commit `735e8d89`).
-   All CD fuzzers use confirmed best params; honggfuzzcd fixed at W=5,C=2,CL=5 (best from dist9 sweep).
-   SSH fixed via sshd drop-in (see DEBUGGING.md). Launch: `cd /local/repository/cloudlab && tmux new-session -d -s dist10 "bash orchestrate.sh --run-id dist10 --timeout 8h"`
-2. **Paper writing**: use dist7–dist9 AFL++CD results as primary evidence; honggfuzz as negative-result section
+1. **Wait for dist10** (~24h). Auto-merge + analysis will run on completion.
+2. **Paper writing**: use dist10 as primary evidence (5 reps, 24h, all 12 fuzzers);
+   dist7–dist9 as supporting data for AFL++CD; honggfuzz as negative-result section.
 3. **Fix dist7_followup.sh**: verdict logic should analyze per-rep ar/ directories, not aggregated
 
 ## Current State
