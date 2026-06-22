@@ -26,7 +26,7 @@ POLL_SECONDS=60
 
 [ -f /local/cdfuzz-role ] && . /local/cdfuzz-role 2>/dev/null
 REPO="${REPO:-/local/repository}"
-SHARED="${SHARED:-/proj/cdfuzzing-PG0}"
+SHARED="${SHARED:-/proj/CDFuzzing}"
 USER_NAME="${USER_NAME:-$(whoami)}"
 
 while [ $# -gt 0 ]; do
@@ -95,8 +95,13 @@ for idx in "${!W_NAME[@]}"; do
         skipped=$((skipped + 1))
         continue
     fi
+    if [ -f "$STATUS_DIR/${tag}.running" ]; then
+        log "skip $name (already .running)"
+        skipped=$((skipped + 1))
+        continue
+    fi
 
-    remote_cmd="nohup bash -c 'cd $REPO && git checkout -- . && git pull --ff-only >> /mydata/${RUN_ID}-${tag}.boot.log 2>&1; bash $REPO/cloudlab/worker-run.sh --fuzzer $fuzzer --rep $rep --run-id $RUN_ID --timeout $TIMEOUT --targets \"$TARGETS\" --repo $REPO --shared $SHARED >> /mydata/${RUN_ID}-${tag}.boot.log 2>&1' &"
+    remote_cmd="nohup bash -c 'cd $REPO && git checkout -- . && git pull --ff-only >> /mydata/${RUN_ID}-${tag}.boot.log 2>&1; bash $REPO/cloudlab/worker-run.sh --fuzzer $fuzzer --rep $rep --run-id $RUN_ID --timeout $TIMEOUT --targets \"$TARGETS\" --repo $REPO --shared $SHARED >> /mydata/${RUN_ID}-${tag}.boot.log 2>&1' >> /mydata/${RUN_ID}-${tag}.boot.log 2>&1 &"
 
     if [ "$DRY_RUN" -eq 1 ]; then
         echo "DRY: ssh $USER_NAME@$ip -- $remote_cmd"

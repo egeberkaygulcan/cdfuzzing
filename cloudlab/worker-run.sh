@@ -32,7 +32,7 @@ TIMEOUT="8h"
 TARGETS="sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl"
 FUZZER_SEED="" # set below from REP
 REPO="/local/repository"
-SHARED="/proj/cdfuzzing-PG0"
+SHARED="/proj/CDFuzzing"
 
 # Inherit role defaults written at boot if present.
 [ -f /local/cdfuzz-role ] && . /local/cdfuzz-role 2>/dev/null
@@ -75,24 +75,35 @@ FUZZER_SEED=$(( 1000 + REP ))
 
 # --- CD parameter tables -------------------------------------------------------
 #
-# All CD fuzzers use confirmed best parameters from dist2–dist9.  All reps are
-# identical so each rep is a genuine statistical repetition.
+# Two modes:
 #
-# Confirmed best params by fuzzer (AFL-based: W=100, threshold=0.05, SR=1, BOOST=1):
+# SWEEP mode (dist10 — honggfuzzcd only):
+#   honggfuzzcd reps 0–5 sweep C=2–10 with different CL values to find the best
+#   consecutive-gate config now that the C/CL code bug is fixed.
 #
-#   Fuzzer         W    C   CL   Evidence
-#   aflcd         100   3   10   dist2 +3 bugs; dist5 +4 bugs
-#   aflpluspluscd 100  12   25   dist7–dist9: +11/+8/+6 bugs; SR=1 essential
-#   fairfuzzcd    100   3   10   dist2 corrected; dist6 +1 bug
-#   moptaflcd     100   5   10   dist2 +6 bugs; dist5 +1 bug
-#   aflfastcd     100   3   10   dist2 +5 bugs; dist5 +5 bugs
-#   honggfuzzcd     5   2    5   dist9 rep0: +1 bug, 10 resets (only C/CL-correct run;
-#                                overall negative result — see DEBUGGING.md).
-#                                W=5 + DRIFT_SAMPLE_SEC=60: C=2 = 2 consecutive stagnation
-#                                minutes.  Only config that fired a controlled reset rate
-#                                (~10/21 progs over 8h) and showed positive signal.
-#                                All higher C values either over-reset (C=3: 30 resets,
-#                                Δ=0) or never fired (C≥8: seed never stagnated).
+# FULL-RUN mode (all other CD fuzzers):
+#   All reps use the confirmed best parameters from dist2–dist9.  All reps are
+#   identical so each rep is a genuine statistical repetition.
+#
+# Confirmed best params by fuzzer (all use SR=1, W=100, threshold=0.05):
+#   aflcd          C=3  CL=10  (dist2 +3 bugs; dist5 +4 bugs)
+#   aflpluspluscd  C=12 CL=25  (dist7–dist9: +11/+8/+6 bugs; confirmed SR=1 essential)
+#   fairfuzzcd     C=3  CL=10  (dist2 corrected; dist6 +1 bug)
+#   moptaflcd      C=5  CL=10  (dist2 +6 bugs; dist5 +1 bug)
+#   aflfastcd      C=3  CL=10  (dist2 +5 bugs; dist5 +5 bugs)
+#   honggfuzzcd    W=5  C=2  CL=5  SR=2  (dist9 rep0 only confirmed test; dist10 sweep pending)
+#
+# honggfuzzcd sweep (dist10): 8h, DRIFT_SAMPLE_SEC=60 so C=N = N consecutive
+# stagnation minutes.  Reps 0–5 explore the C/CL space:
+#
+#  rep | W | C  | CL | profile
+#  ----+---+----+----+---------
+#   0  | 5 |  2 |  5 | aggressive
+#   1  | 5 |  3 | 10 | moderate
+#   2  | 5 |  5 | 15 | conservative
+#   3  | 5 |  8 | 25 | very conservative
+#   4  | 5 | 10 | 25 | near-zero calibration
+#   5  | 5 |  3 |  3 | moderate C + short CL
 
 # Defaults (safe fallback for any unrecognised fuzzer / baseline).
 CD_CONSECUTIVE=5
@@ -120,12 +131,17 @@ case "$FUZZER" in
         # Confirmed best across dist7–dist9.  All reps use the same config.
         CD_SOFT_RESET=1; CD_CONSECUTIVE=12; CD_HAVOC_BOOST=1; CD_COOLDOWN=25
         ;;
-    # --- honggfuzzcd: confirmed best params, all reps identical -------------------
+    # --- honggfuzzcd: sweep mode for dist10 ------------------------------------
     honggfuzzcd)
-        # W=5, DRIFT_SAMPLE_SEC=60 → C=2 = 2 consecutive stagnation minutes.
-        # Only config (dist9 rep0) that fired a controlled reset rate and showed
-        # positive signal (+1 bug, 10 resets / 21 programs over 8h).
-        CD_WINDOW=5; CD_CONSECUTIVE=2; CD_COOLDOWN=5
+        case "$REP" in
+            0) CD_WINDOW=5; CD_CONSECUTIVE=2;  CD_COOLDOWN=5  ;;
+            1) CD_WINDOW=5; CD_CONSECUTIVE=3;  CD_COOLDOWN=10 ;;
+            2) CD_WINDOW=5; CD_CONSECUTIVE=5;  CD_COOLDOWN=15 ;;
+            3) CD_WINDOW=5; CD_CONSECUTIVE=8;  CD_COOLDOWN=25 ;;
+            4) CD_WINDOW=5; CD_CONSECUTIVE=10; CD_COOLDOWN=25 ;;
+            5) CD_WINDOW=5; CD_CONSECUTIVE=3;  CD_COOLDOWN=3  ;;
+            *) CD_WINDOW=5; CD_CONSECUTIVE=2;  CD_COOLDOWN=5  ;;  # reps 6+: use best-known config
+        esac
         ;;
 esac
 log "seed=$FUZZER_SEED CD params: W=$CD_WINDOW C=$CD_CONSECUTIVE SR=$CD_SOFT_RESET BOOST=$CD_HAVOC_BOOST CL=$CD_COOLDOWN SF=$CD_STAGNATION"
