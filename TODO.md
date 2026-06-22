@@ -20,7 +20,10 @@
 - [x] **dist8 COMPLETE** (2026-06-21 13:14 CDT): aflpluspluscd confirmed +1.8 avg (C=10); C=12 gave +8 (best); honggfuzz C/CL bug discovered
 - [x] **Fix honggfuzz drift-detect.c**: `drift_init()` now reads `AFL_DRIFT_CONSECUTIVE`/`AFL_DRIFT_COOLDOWN`; `drift_check_value()` enforces consecutive/cooldown gate
 - [x] **smoke9 PASSED** (2026-06-21 ~16:47 CDT): consecutive_drifts counted 0→1→0 (reset at C=2), cooldown 5→0, corpus reset confirmed (queue 814→105)
-- [x] **dist9 COMPLETE** (2026-06-22 01:25 CDT, 24/24, 0 failed): AFL++CD +6 bugs (C=12 confirmed); honggfuzz CD −4 bugs (negative result accepted)
+- [x] ⚠ **dist9 INVALID** (2026-06-22, post-mortem): only worker .16 had the honggfuzz fix; workers .17–.33 were at c85513f6 (dist7 code). Results cannot be trusted.
+- [x] **orchestrate.sh fixed**: now does `git pull --ff-only` on each worker before running worker-run.sh
+- [x] **All 24 workers pulled to 65fc953b** (2026-06-22, manually)
+- [ ] **Launch dist10** — re-run dist9 design now that all workers have correct code; same params (honggfuzz C=2–10 sweep + AFL++ 4× C=12 confirm)
 - [ ] **Fix dist7_followup.sh verdict logic** — should analyze per-rep, not aggregated total
 - [ ] **Update paper draft** with final configs: AFL++CD SR=1,C=12,CL=25 → +6 bugs on Magma; honggfuzz CD negative result section
 

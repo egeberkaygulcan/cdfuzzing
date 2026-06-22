@@ -96,10 +96,7 @@ for idx in "${!W_NAME[@]}"; do
         continue
     fi
 
-    remote_cmd="nohup bash '$REPO/cloudlab/worker-run.sh' \
---fuzzer '$fuzzer' --rep '$rep' --run-id '$RUN_ID' --timeout '$TIMEOUT' \
---targets '$TARGETS' --repo '$REPO' --shared '$SHARED' \
-> /mydata/${RUN_ID}-${tag}.boot.log 2>&1 &"
+    remote_cmd="nohup bash -c 'cd $REPO && git pull --ff-only >> /mydata/${RUN_ID}-${tag}.boot.log 2>&1; bash $REPO/cloudlab/worker-run.sh --fuzzer $fuzzer --rep $rep --run-id $RUN_ID --timeout $TIMEOUT --targets \"$TARGETS\" --repo $REPO --shared $SHARED >> /mydata/${RUN_ID}-${tag}.boot.log 2>&1' &"
 
     if [ "$DRY_RUN" -eq 1 ]; then
         echo "DRY: ssh $USER_NAME@$ip -- $remote_cmd"

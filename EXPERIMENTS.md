@@ -2,7 +2,7 @@
 
 ---
 
-## distributed (CloudLab): dist9 — 6 reps × 4 fuzzers, 8h, first real honggfuzz C/CL sweep + AFL++ C=12 confirmation (COMPLETE)
+## distributed (CloudLab): dist9 — 6 reps × 4 fuzzers, 8h, first real honggfuzz C/CL sweep + AFL++ C=12 confirmation (⚠ INVALID)
 
 Goal:
 1. **First real honggfuzz C/CL sweep** — fix applied to `drift-detect.c:drift_init()` now reads
@@ -50,7 +50,14 @@ Launch command (after smoke9 passes):
 cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist9 --timeout 8h --poll 60
 ```
 
-Status: **COMPLETE** (2026-06-22 01:25 CDT, 24/24 workers, 0 failed)
+Status: **⚠ INVALID** (2026-06-22 01:25 CDT, 24/24 workers, 0 failed)
+
+> **Root cause**: Only worker 192.168.1.16 (honggfuzzcd rep 0) had been `git pull`-ed to 55a9b82a
+> before launch. Workers 192.168.1.17–.33 were still at c85513f6 (dist7 code), so:
+> - honggfuzz reps 1–5: ran with dist7 param table + unfixed drift-detect.c (no C/CL gate)
+> - AFL++ reps 0–5: ran with dist7 AFL++ params (SR=2 for rep 0, C=6–8, not C=12)
+> Only rep 0 results are valid. `orchestrate.sh` now does `git pull` before each worker
+> dispatch (fix in 65fc953b+1). **dist10 will re-run the full sweep correctly.**
 
 ### Results
 
