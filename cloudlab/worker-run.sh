@@ -140,6 +140,7 @@ case "$FUZZER" in
             3) CD_WINDOW=5; CD_CONSECUTIVE=8;  CD_COOLDOWN=25 ;;
             4) CD_WINDOW=5; CD_CONSECUTIVE=10; CD_COOLDOWN=25 ;;
             5) CD_WINDOW=5; CD_CONSECUTIVE=3;  CD_COOLDOWN=3  ;;
+            *) CD_WINDOW=5; CD_CONSECUTIVE=2;  CD_COOLDOWN=5  ;;  # reps 6+: use best-known config
         esac
         ;;
 esac
