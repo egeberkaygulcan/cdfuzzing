@@ -4,18 +4,19 @@ Reference for the distributed multi-node CD-Fuzzing campaign on CloudLab. This
 replaces the single-machine, sequential-batch workflow (seed_4) with one node
 per (fuzzer × repetition), dispatched and merged from a central head node.
 
-> Status (2026-06-17): **`dist1` is RUNNING.** Launched ~20:20 CDT 2026-06-17;
-> expected finish ~06:00 CDT 2026-06-18. Monitor:
-> `tail -f /proj/cdfuzzing-PG0/distributed/dist1_orch.log`
-> or `tmux attach -t dist1` on the head.
+> Status (2026-06-22): **Cluster ready for dist10.** Current cluster: Wisconsin,
+> 25 nodes (head + 24 workers, `192.168.1.1` + `.10–.33`), 4 fuzzers × 6 reps
+> (honggfuzz, honggfuzzcd, aflplusplus, aflpluspluscd). All workers at commit
+> `54b69655`. Next: dist10 (honggfuzz C/CL sweep + AFL++ confirmation, 8h).
 >
-> Cluster: Wisconsin, `c220g1`, 25 nodes up (head + 24 workers). Docker, `/mydata`,
-> shared SSH key, and manifest verified cluster-wide. Smoke test (afl+aflcd, sqlite3,
-> 10min, 4/4 done) passed before launch.
+> For a **full 12-fuzzer run**: create a new CloudLab experiment with
+> `fuzzerSet=all`, `nodesPerFuzzer=6` → 73 nodes. Run setup-node.sh head first,
+> then `orchestrate.sh --run-id distN --timeout 8h`.
 >
-> The original boot-time auto-setup **failed** (a quoting bug, now fixed) and the
-> design wrongly assumed a shared home FS. Both were corrected and nodes were
-> provisioned manually — see **Provisioning (what actually happened)** below.
+> Known fixed issues: boot-time quoting bug (profile.py), Docker data-root overflow
+> (moved to /mydata), NFS *.honggfuzz.cov quota (rsync exclude), silent rsync
+> failures, workers never git-pulled before dispatch (orchestrate.sh now does
+> `git checkout -- . && git pull --ff-only` on each worker before running).
 
 ## What it provisions
 

@@ -135,7 +135,7 @@ if ! grep -q "cdfuzz-cluster" ~/.ssh/config 2>/dev/null; then
     cat >> ~/.ssh/config <<'CFG'
 
 # cdfuzz-cluster: relax host checking for the private experiment LAN
-Host 192.168.1.* head *-0 *-1 *-2 *-3
+Host 192.168.1.* head *-0 *-1 *-2 *-3 *-4 *-5 *-6 *-7 *-8 *-9
   StrictHostKeyChecking no
   UserKnownHostsFile /dev/null
   LogLevel ERROR

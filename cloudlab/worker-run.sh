@@ -73,36 +73,39 @@ echo "$(date '+%F %T') started on $(hostname)" > "$STATUS_DIR/${NODE_TAG}.runnin
 # whether CD is active.  Same for aflplusplus_N / aflpluspluscd_N.
 FUZZER_SEED=$(( 1000 + REP ))
 
-# --- CD parameter sweep (6 reps × 2 pairs: honggfuzz and aflplusplus) ----------
+# --- CD parameter tables -------------------------------------------------------
 #
-# dist9: 8h, first honggfuzz sweep with WORKING C/CL params + AFL++ C=12 confirm
+# Two modes:
 #
-# honggfuzz: DRIFT_SAMPLE_SEC=60 means C=N → N consecutive minutes of stagnation.
-#   dist8 showed ~1.3 resets/prog/8h with no gate (W=5).  Adding the consecutive
-#   gate should reduce this.  Sweep C=2–10 to find the sweet spot.
-#   CL is also in minutes.
+# SWEEP mode (dist10 — honggfuzzcd only):
+#   honggfuzzcd reps 0–5 sweep C=2–10 with different CL values to find the best
+#   consecutive-gate config now that the C/CL code bug is fixed.
 #
-#  rep | WINDOW | CONSEC | COOLDOWN | expected resets/prog (8h) | profile
-#  ----+--------+--------+----------+---------------------------+---------
-#   0  |   5    |    2   |    5     | ~0.5–1.0                  | aggressive
-#   1  |   5    |    3   |   10     | ~0.3–0.7                  | moderate
-#   2  |   5    |    5   |   15     | ~0.1–0.3                  | conservative
-#   3  |   5    |    8   |   25     | ~0–0.1                    | very conservative
-#   4  |   5    |   10   |   25     | ~0                        | near-zero (calibration)
-#   5  |   5    |    3   |    3     | ~0.5–1.0                  | moderate C + short CL
+# FULL-RUN mode (all other CD fuzzers):
+#   All reps use the confirmed best parameters from dist2–dist9.  All reps are
+#   identical so each rep is a genuine statistical repetition.
 #
-# aflpluspluscd — confirm SR=1,C=12,CL=25 as best config (dist8 rep5: +8 bugs).
-#   All reps use SR=1.  Reps 0–3 pure replication; reps 4–5 boundary probes.
+# Confirmed best params by fuzzer (all use SR=1, W=100, threshold=0.05):
+#   aflcd          C=3  CL=10  (dist2 +3 bugs; dist5 +4 bugs)
+#   aflpluspluscd  C=12 CL=25  (dist7–dist9: +11/+8/+6 bugs; confirmed SR=1 essential)
+#   fairfuzzcd     C=3  CL=10  (dist2 corrected; dist6 +1 bug)
+#   moptaflcd      C=5  CL=10  (dist2 +6 bugs; dist5 +1 bug)
+#   aflfastcd      C=3  CL=10  (dist2 +5 bugs; dist5 +5 bugs)
+#   honggfuzzcd    W=5  C=2  CL=5  SR=2  (dist9 rep0 only confirmed test; dist10 sweep pending)
 #
-#  rep | SR | CONSEC | BOOST | COOLDOWN | profile
-#  ----+----+--------+-------+----------+---------
-#   0  |  1 |   12   |   1   |   25     | confirm new best (rep A)
-#   1  |  1 |   12   |   1   |   25     | confirm new best (rep B)
-#   2  |  1 |   12   |   1   |   25     | confirm new best (rep C)
-#   3  |  1 |   12   |   1   |   25     | confirm new best (rep D)
-#   4  |  1 |   14   |   1   |   25     | right boundary push
-#   5  |  1 |   10   |   1   |   25     | compare vs dist8 C=10 baseline
+# honggfuzzcd sweep (dist10): 8h, DRIFT_SAMPLE_SEC=60 so C=N = N consecutive
+# stagnation minutes.  Reps 0–5 explore the C/CL space:
+#
+#  rep | W | C  | CL | profile
+#  ----+---+----+----+---------
+#   0  | 5 |  2 |  5 | aggressive
+#   1  | 5 |  3 | 10 | moderate
+#   2  | 5 |  5 | 15 | conservative
+#   3  | 5 |  8 | 25 | very conservative
+#   4  | 5 | 10 | 25 | near-zero calibration
+#   5  | 5 |  3 |  3 | moderate C + short CL
 
+# Defaults (safe fallback for any unrecognised fuzzer / baseline).
 CD_CONSECUTIVE=5
 CD_STAGNATION=0.5
 CD_COOLDOWN=10
@@ -111,6 +114,24 @@ CD_SOFT_RESET=2
 CD_HAVOC_BOOST=2
 
 case "$FUZZER" in
+    # --- AFL-based CD fuzzers: confirmed best params, all reps identical --------
+    aflcd)
+        CD_SOFT_RESET=1; CD_CONSECUTIVE=3; CD_HAVOC_BOOST=1; CD_COOLDOWN=10
+        ;;
+    fairfuzzcd)
+        CD_SOFT_RESET=1; CD_CONSECUTIVE=3; CD_HAVOC_BOOST=1; CD_COOLDOWN=10
+        ;;
+    moptaflcd)
+        CD_SOFT_RESET=1; CD_CONSECUTIVE=5; CD_HAVOC_BOOST=1; CD_COOLDOWN=10
+        ;;
+    aflfastcd)
+        CD_SOFT_RESET=1; CD_CONSECUTIVE=3; CD_HAVOC_BOOST=1; CD_COOLDOWN=10
+        ;;
+    aflpluspluscd)
+        # Confirmed best across dist7–dist9.  All reps use the same config.
+        CD_SOFT_RESET=1; CD_CONSECUTIVE=12; CD_HAVOC_BOOST=1; CD_COOLDOWN=25
+        ;;
+    # --- honggfuzzcd: sweep mode for dist10 ------------------------------------
     honggfuzzcd)
         case "$REP" in
             0) CD_WINDOW=5; CD_CONSECUTIVE=2;  CD_COOLDOWN=5  ;;
@@ -119,16 +140,6 @@ case "$FUZZER" in
             3) CD_WINDOW=5; CD_CONSECUTIVE=8;  CD_COOLDOWN=25 ;;
             4) CD_WINDOW=5; CD_CONSECUTIVE=10; CD_COOLDOWN=25 ;;
             5) CD_WINDOW=5; CD_CONSECUTIVE=3;  CD_COOLDOWN=3  ;;
-        esac
-        ;;
-    aflpluspluscd)
-        case "$REP" in
-            0) CD_SOFT_RESET=1; CD_CONSECUTIVE=12; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;  # confirm new best
-            1) CD_SOFT_RESET=1; CD_CONSECUTIVE=12; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;  # confirm new best
-            2) CD_SOFT_RESET=1; CD_CONSECUTIVE=12; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;  # confirm new best
-            3) CD_SOFT_RESET=1; CD_CONSECUTIVE=12; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;  # confirm new best
-            4) CD_SOFT_RESET=1; CD_CONSECUTIVE=14; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;  # right boundary push
-            5) CD_SOFT_RESET=1; CD_CONSECUTIVE=10; CD_HAVOC_BOOST=1; CD_COOLDOWN=25 ;;  # compare vs dist8 C=10
         esac
         ;;
 esac

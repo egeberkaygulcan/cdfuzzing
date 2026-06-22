@@ -4,6 +4,11 @@ Provisions one orchestrator ("head") node plus a set of worker nodes. By default
 each of the 12 fuzzers (6 baselines + 6 concept-drift variants) gets 2 worker
 nodes (one per repetition), i.e. 24 workers + 1 head = 25 bare-metal nodes.
 
+For a full publication-quality run use nodesPerFuzzer=6 (all=12 fuzzers,
+6 reps each → 72 workers + 1 head = 73 nodes).  For the current dist10
+honggfuzz sweep + AFL++ confirmation: fuzzerSet=honggfuzz,honggfuzzcd,
+aflplusplus,aflpluspluscd with nodesPerFuzzer=6 → 24 workers + 1 head.
+
 This file lives at the REPO ROOT so CloudLab's git-based profile creation can
 discover it (CloudLab looks for ./profile.py or ./profiles/profile.py). The
 boot/orchestration shell scripts it references live in ./cloudlab/.
