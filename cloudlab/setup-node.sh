@@ -23,7 +23,7 @@ REP="0"
 FUZZERS=""
 NPF="1"
 REPO="/local/repository"
-SHARED="/proj/cdfuzzing-PG0"
+SHARED="/proj/CDFuzzing"
 START_IP=10   # first worker is 192.168.1.10 (must match profile.py)
 
 while [ $# -gt 0 ]; do
@@ -143,21 +143,7 @@ CFG
     chmod 600 ~/.ssh/config
 fi
 SSHEOF
-
-# Emulab's per-node keymgmt daemon regenerates ~/.ssh/authorized_keys and
-# ~/.ssh/id_rsa with per-node keys AFTER setup runs, silently wiping the cluster
-# key we just appended.  Work around this by also writing the cluster pubkey to
-# a root-owned system file that Emulab never touches, and teaching sshd to
-# check it via an sshd_config drop-in.
-CLUSTER_PUBKEY_FILE="/etc/ssh/cdfuzz_authorized_keys"
-install -m 644 "$CLUSTER_SSH/id_rsa.pub" "$CLUSTER_PUBKEY_FILE"
-mkdir -p /etc/ssh/sshd_config.d
-if [ ! -f /etc/ssh/sshd_config.d/cdfuzz.conf ]; then
-    printf 'AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/cdfuzz_authorized_keys\n' \
-        > /etc/ssh/sshd_config.d/cdfuzz.conf
-    systemctl reload sshd 2>/dev/null || service ssh reload 2>/dev/null || true
-fi
-log "SSH cluster key installed from $CLUSTER_SSH (also written to $CLUSTER_PUBKEY_FILE)"
+log "SSH cluster key installed from $CLUSTER_SSH"
 
 # --- 4. Record this node's role -------------------------------------------
 mkdir -p /local
