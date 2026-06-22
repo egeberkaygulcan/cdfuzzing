@@ -2,6 +2,48 @@
 
 ---
 
+## Issue: /proj/cdfuzzing-PG0 is local per-node; real shared NFS is /proj/CDFuzzing (2026-06-22)
+
+Symptoms:
+- Workers fail immediately: `mkdir: cannot create directory '/proj/cdfuzzing-PG0/distributed': Permission denied`
+- No `.running` files appear on the NFS; orchestrator stuck at `running=0 done=0 failed=0` forever
+- Head can write to `/proj/cdfuzzing-PG0/distributed/` but workers cannot see it at all
+
+Root cause (two-part):
+
+**Part 1 — path mismatch**: `/proj/cdfuzzing-PG0/` is a **local directory** on each
+node's root disk (not NFS-shared). It is created by Emulab's boot scripts. The actual
+project NFS is `/proj/CDFuzzing` (mounted from `fs.emulab.net:/proj/CDFuzzing`).
+`setup-node.sh` wrote `SHARED=/proj/cdfuzzing-PG0` into `/local/cdfuzz-role`, which is
+sourced by both `orchestrate.sh` and `worker-run.sh` BEFORE the `${SHARED:-default}`
+assignment — so the wrong value was never overridden.
+
+**Part 2 — `nohup` SSH blocking**: The remote dispatch command was:
+```bash
+nohup bash -c '... cmd >> /mydata/boot.log 2>&1' &
+```
+`nohup`'s own stdout was **not redirected** — it inherited the SSH pipe as fd1. Even though
+the inner cmd redirected its output to the log file, `nohup` kept the pipe FD open until the
+24h fuzzing campaign finished. Result: every SSH in the dispatch loop blocked for 24h, only
+the first worker was ever dispatched.
+
+Fix applied (commits `05eaf9c6`, `4fa1146e`):
+1. `setup-node.sh`: changed default to `SHARED=/proj/CDFuzzing`
+2. `orchestrate.sh` + `worker-run.sh`: changed default to `SHARED=/proj/CDFuzzing`
+3. `orchestrate.sh` remote_cmd: added `>> /mydata/${RUN_ID}-${tag}.boot.log 2>&1` to
+   the **outer** `nohup` invocation so SSH returns immediately after backgrounding
+4. `orchestrate.sh`: added `.running` skip check (alongside `.done`) so relaunches
+   don't re-dispatch already-running workers
+5. `/local/cdfuzz-role` patched on all 61 live nodes via parallel SSH loop
+
+Verify shared NFS is writable:
+```bash
+touch /proj/CDFuzzing/test_head && echo "head ok" && rm /proj/CDFuzzing/test_head
+ssh eldarfin@192.168.1.10 "touch /proj/CDFuzzing/test_worker && echo 'worker ok' && rm /proj/CDFuzzing/test_worker"
+```
+
+---
+
 ## Issue: Emulab keymgmt daemon wipes cluster SSH key after setup-node.sh runs (2026-06-22)
 
 Symptoms:

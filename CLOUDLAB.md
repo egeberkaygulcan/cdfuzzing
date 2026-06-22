@@ -4,15 +4,14 @@ Reference for the distributed multi-node CD-Fuzzing campaign on CloudLab. This
 replaces the single-machine, sequential-batch workflow (seed_4) with one node
 per (fuzzer × repetition), dispatched and merged from a central head node.
 
-> Status (2026-06-22): **Cluster ready for dist10.** Current cluster: Wisconsin,
-> 61 nodes (head + 60 workers, `192.168.1.1` + `.10–.69`), 12 fuzzers × 5 reps
-> (all baselines + all CD variants). All workers at commit `735e8d89`.
-> Next: dist10 (full 12-fuzzer × 5-rep run, 8h).
+> Status (2026-06-22): **dist10 RUNNING — 60/60 workers active** (started 09:09 CDT).
+> Current cluster: Wisconsin, 61 nodes (head + 60 workers, `192.168.1.1` + `.10–.69`),
+> 12 fuzzers × 5 reps (all baselines + all CD variants). All workers at commit `4fa1146e`.
+> Shared NFS: `/proj/CDFuzzing` (100 GB, writable by all nodes). dist10 expected ~2026-06-23 09:30 CDT.
 >
-> For a **full 12-fuzzer 6-rep run**: use `fuzzerSet=all`, `nodesPerFuzzer=6` → 73
-> nodes. Run setup-node.sh head first, then `orchestrate.sh --run-id distN --timeout 8h`.
->
-> Known fixed issues: boot-time quoting bug (profile.py), Docker data-root overflow
+> Known fixed issues: boot-time quoting bug (profile.py), Docker data-root overflow,
+> Emulab keymgmt SSH key wipe, `/proj/cdfuzzing-PG0` local-path bug (was not NFS;
+> real NFS is `/proj/CDFuzzing`; `nohup` SSH blocking, `.running` skip on relaunch
 > (moved to /mydata), NFS *.honggfuzz.cov quota (rsync exclude), silent rsync
 > failures, workers never git-pulled before dispatch (orchestrate.sh now does
 > `git checkout -- . && git pull --ff-only` on each worker before running),

@@ -2,11 +2,16 @@
 
 ## Current Goal
 
-Evaluate CD-Fuzzing on the Magma benchmark. **`dist10` is RUNNING** (launched 2026-06-22 07:43 CDT).
+Evaluate CD-Fuzzing on the Magma benchmark. **`dist10` is RUNNING** (all 60/60 workers active, started 2026-06-22 09:09 CDT).
 
 dist10 is the full paper-quality run: 12 fuzzers × 5 reps × 24h, all confirmed best params.
-Expected completion: **2026-06-23 ~07:45 CDT**. Monitor: `tmux attach -t dist10` or
-`tail -f /proj/cdfuzzing-PG0/distributed/dist10_orch.log`.
+Expected completion: **2026-06-23 ~09:30 CDT**. Monitor:
+```bash
+tmux attach -t dist10          # live orchestrator (detach: Ctrl-B D)
+tail -f /proj/CDFuzzing/dist10_orch.log
+ls /proj/CDFuzzing/distributed/dist10/status/*.done 2>/dev/null | wc -l   # done
+ls /proj/CDFuzzing/distributed/dist10/status/*.running 2>/dev/null | wc -l # running
+```
 
 dist9 key findings (use with care — only rep 0 was on correct code):
 1. **aflpluspluscd SR=1, C=12, CL=25 confirmed**: +6 unique bugs over AFL++ baseline (34→40) across 21 Magma programs. Guard filters 95% of drifts. **This is the paper-ready final config.**
