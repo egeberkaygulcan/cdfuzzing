@@ -29,8 +29,11 @@
   Monitor: `tmux attach -t dist10` or `tail -f /proj/cdfuzzing-PG0/distributed/dist10_orch.log`
 - [x] **dist10 LOST** (2026-06-23): CloudLab lease expired ~22:36 CDT June 22 (~14h in). Local /mydata wiped on deallocation; rsync never ran. ar/ empty. All prior dist1–dist9 data also gone (were on old cluster NFS).
 - [x] **Fix libtiff fetch.sh** (2026-06-23, commit `15974124`): 24/60 workers had libtiff build failures in dist10 due to GitLab rate-limiting concurrent clones. Added 3-attempt retry with 30/60/90s backoff.
-- [ ] **Launch dist11** (= full redo of dist10): request new CloudLab allocation with ≥26h lease, `git pull` on all workers to pick up libtiff fix, then re-run.
-  `cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist11 --timeout 24h --poll 60`
+- [x] **Launch dist11** (2026-06-23 04:37 CDT, `tmux:dist11`): full redo of dist10 with libtiff fix — 12 fuzzers × 5 reps × 24h, commit `0271863d`, all 60 workers confirmed.
+  Expected done: 2026-06-24 ~04:38 CDT.
+  Monitor: `tmux attach -t dist11` or `tail -f /proj/CDFuzzing/dist11_orch.log`
+- [ ] **Analyze dist11 results** when complete:
+  `CDFUZZ_BASE=/proj/CDFuzzing/distributed/dist11 CDFUZZ_OUTDIR=/proj/CDFuzzing/distributed/dist11/plots python3 /local/repository/plot_seed4.py`
 - [ ] **Fix dist7_followup.sh verdict logic** — should analyze per-rep, not aggregated total
 - [ ] **Update paper draft** with final configs: AFL++CD SR=1,C=12,CL=25 → +6 bugs on Magma; honggfuzz CD negative result section
 
