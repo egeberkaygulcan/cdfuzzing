@@ -2,6 +2,35 @@
 
 ---
 
+## Issue: libtiff build fails on ~40% of workers due to concurrent GitLab clone (2026-06-23)
+
+Symptoms:
+- `Failed to build magma/<fuzzer>/libtiff. Check build log for info.` in worker logs
+- Affects ~24/60 workers in dist10; no other targets affected
+- Failure is intermittent: single sequential builds always succeed
+
+Root cause:
+All 60 workers reach the `libtiff/fetch.sh` step at nearly the same time (~09:06–09:36 CDT)
+after building the same earlier targets (sqlite3, libpng, lua, libsndfile).
+`git clone https://gitlab.com/libtiff/libtiff.git` under concurrent load from 60 workers
+sharing the same external IP causes GitLab to rate-limit or drop some connections.
+Other targets using git clone (libxml2, poppler) hit their fetch step at different times
+due to different build durations, so they're not affected.
+
+Fix (commit `15974124`, `magma/targets/libtiff/fetch.sh`):
+```bash
+for attempt in 1 2 3; do
+    rm -rf "$TARGET/repo"
+    git clone --no-checkout https://gitlab.com/libtiff/libtiff.git "$TARGET/repo" && break
+    echo "libtiff clone attempt $attempt failed; retrying in $((attempt * 30))s..."
+    sleep $((attempt * 30))
+    [ "$attempt" -eq 3 ] && { echo "ERROR: libtiff clone failed after 3 attempts"; exit 1; }
+done
+```
+Zero latency penalty on success (breaks immediately). Max added wait: 90s on third attempt.
+
+---
+
 ## Issue: /proj/cdfuzzing-PG0 is local per-node; real shared NFS is /proj/CDFuzzing (2026-06-22)
 
 Symptoms:

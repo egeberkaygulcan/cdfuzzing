@@ -27,8 +27,10 @@
   × 24h, all confirmed best params, seeds 1000–1004, commit `1bfa67b2`.
   Expected done: 2026-06-23 ~07:45 CDT.
   Monitor: `tmux attach -t dist10` or `tail -f /proj/cdfuzzing-PG0/distributed/dist10_orch.log`
-- [ ] **Analyze dist10 results** when complete (auto-triggered; also run manually if needed):
-  `CDFUZZ_BASE=/proj/cdfuzzing-PG0/distributed/dist10 CDFUZZ_OUTDIR=.../dist10/plots python3 /local/repository/plot_seed4.py`
+- [x] **dist10 LOST** (2026-06-23): CloudLab lease expired ~22:36 CDT June 22 (~14h in). Local /mydata wiped on deallocation; rsync never ran. ar/ empty. All prior dist1–dist9 data also gone (were on old cluster NFS).
+- [x] **Fix libtiff fetch.sh** (2026-06-23, commit `15974124`): 24/60 workers had libtiff build failures in dist10 due to GitLab rate-limiting concurrent clones. Added 3-attempt retry with 30/60/90s backoff.
+- [ ] **Launch dist11** (= full redo of dist10): request new CloudLab allocation with ≥26h lease, `git pull` on all workers to pick up libtiff fix, then re-run.
+  `cd /local/repository/cloudlab && bash orchestrate.sh --run-id dist11 --timeout 24h --poll 60`
 - [ ] **Fix dist7_followup.sh verdict logic** — should analyze per-rep, not aggregated total
 - [ ] **Update paper draft** with final configs: AFL++CD SR=1,C=12,CL=25 → +6 bugs on Magma; honggfuzz CD negative result section
 
