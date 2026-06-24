@@ -2,26 +2,129 @@
 
 ## Current Goal
 
-Evaluate CD-Fuzzing on the Magma benchmark. **`dist10` is RUNNING** (all 60/60 workers active, started 2026-06-22 09:09 CDT).
+Produce paper-quality results (10 reps × 24h × 12 fuzzers × 21 Magma programs) by merging two runs:
 
-dist10 is the full paper-quality run: 12 fuzzers × 5 reps × 24h, all confirmed best params.
-Expected completion: **2026-06-23 ~09:30 CDT**. Monitor:
+- **`dist11`** (reps 0–4): running on cluster `eldarfin-309063`, **finishing ~June 26 12:00 CEST** (noon Thursday)
+- **`dist12`** (reps 5–9): to launch on a NEW CloudLab experiment, **finishing ~June 28 12:00 CEST** (noon Saturday)
+
+After both finish, merge and run analysis. See § Merge and § Analysis below.
+
+---
+
+## dist11 Status (as of 2026-06-24)
+
+**15/60 workers done, 45 running, 0 failed.**
+
+Important: each CloudLab worker node has only **8 CPUs**. With 21 Magma programs, captain
+queues them in 3 waves (8 / 8 / 5 programs each, one wave per 24h). Total runtime ≈ 72h.
+
+| Wave | Programs | Started | Finishes |
+|---|---|---|---|
+| Wave 1 | sqlite3, libpng, lua, libsndfile, libtiff×2, libxml2×2 | June 23 ~04:38 CDT | June 24 ✅ |
+| Wave 2 | poppler×3, php×4, openssl×6 (partial) | June 24 ~04:48 CDT | June 25 ~05:35 CDT |
+| Wave 3 | remaining programs | June 25 ~04:48 CDT | **June 26 ~05:35 CDT** |
+
+Monitor dist11:
 ```bash
-tmux attach -t dist10          # live orchestrator (detach: Ctrl-B D)
-tail -f /proj/CDFuzzing/dist10_orch.log
-ls /proj/CDFuzzing/distributed/dist10/status/*.done 2>/dev/null | wc -l   # done
-ls /proj/CDFuzzing/distributed/dist10/status/*.running 2>/dev/null | wc -l # running
+# from head node of eldarfin-309063 (192.168.1.1):
+echo "done: $(ls /proj/CDFuzzing/distributed/dist11/status/*.done 2>/dev/null | wc -l) / 60"
+tail -5 /proj/CDFuzzing/dist11_orch.log
 ```
 
-dist9 key findings (use with care — only rep 0 was on correct code):
-1. **aflpluspluscd SR=1, C=12, CL=25 confirmed**: +6 unique bugs over AFL++ baseline (34→40) across 21 Magma programs. Guard filters 95% of drifts. **This is the paper-ready final config.**
-2. **honggfuzz CD best config W=5,C=2,CL=5**: +1 bug in dist9 rep0; marginal positive result.
+Results accumulate at `/proj/CDFuzzing/distributed/dist11/ar/` as each worker completes.
 
-Next steps:
-1. **Wait for dist10** (~24h). Auto-merge + analysis will run on completion.
-2. **Paper writing**: use dist10 as primary evidence (5 reps, 24h, all 12 fuzzers);
-   dist7–dist9 as supporting data for AFL++CD; honggfuzz as negative-result section.
-3. **Fix dist7_followup.sh**: verdict logic should analyze per-rep ar/ directories, not aggregated
+---
+
+## dist12 Setup (reps 5–9)
+
+**Create a new CloudLab experiment** using the same profile with these parameters:
+
+| Parameter | Value |
+|---|---|
+| `nodesPerFuzzer` | `5` |
+| `repOffset` | **`5`** ← critical |
+| `sharedDir` | `/proj/CDFuzzing` (same NFS as dist11) |
+| `fuzzerSet` | `all` |
+| `phystype` | leave blank or same as dist11 |
+
+This will create 60 worker nodes named `afl-5` through `honggfuzzcd-9` with the correct rep IDs
+in `/local/cdfuzz-role`. The head generates a manifest with reps 5–9 automatically.
+
+Once the experiment is up and workers have finished booting (check `/local/setup.log` on head):
+```bash
+# SSH to the new head node (192.168.1.1 on the new experiment's LAN)
+cd /local/repository/cloudlab
+tmux new-session -d -s dist12 \
+  "bash orchestrate.sh --run-id dist12 --timeout 24h --poll 60 \
+     2>&1 | tee /proj/CDFuzzing/dist12_orch.log"
+echo "dist12 launched"
+```
+
+Monitor dist12:
+```bash
+echo "done: $(ls /proj/CDFuzzing/distributed/dist12/status/*.done 2>/dev/null | wc -l) / 60"
+tail -5 /proj/CDFuzzing/dist12_orch.log
+```
+
+Expected completion: **June 28 ~12:00 CEST** (Saturday noon Amsterdam).
+
+---
+
+## Merge Instructions (after both complete)
+
+```bash
+mkdir -p /proj/CDFuzzing/distributed/dist11_merged/{ar,plots}
+
+# Merge dist11 (reps 0-4) + dist12 (reps 5-9) into one ar/ tree
+rsync -a /proj/CDFuzzing/distributed/dist11/ar/ \
+         /proj/CDFuzzing/distributed/dist11_merged/ar/
+rsync -a /proj/CDFuzzing/distributed/dist12/ar/ \
+         /proj/CDFuzzing/distributed/dist11_merged/ar/
+
+# Verify: each program dir should have 10 rep subdirs (0-9)
+find /proj/CDFuzzing/distributed/dist11_merged/ar/afl/sqlite3 -maxdepth 2 -type d
+```
+
+---
+
+## Analysis
+
+Run from either head node (both mount the same `/proj/CDFuzzing` NFS):
+```bash
+CDFUZZ_BASE=/proj/CDFuzzing/distributed/dist11_merged \
+CDFUZZ_OUTDIR=/proj/CDFuzzing/distributed/dist11_merged/plots \
+python3 /local/repository/plot_seed4.py
+```
+
+---
+
+## Final Fuzzer Configurations (paper-ready)
+
+| Fuzzer | Config | Best observed Δbugs | Evidence |
+|---|---|---|---|
+| aflcd | SR=1, C=3, CL=10, W=100 | +4 bugs | dist5 |
+| aflpluspluscd | **SR=1, C=12, CL=25**, W=100 | +11 bugs (dist7); +6 unique (dist9) | dist7–dist9 |
+| fairfuzzcd | SR=1, C=3, CL=10, W=100 | +1 bug | dist6 |
+| moptaflcd | SR=1, C=5, CL=10, W=100 | +6 bugs | dist2 |
+| aflfastcd | SR=1, C=3, CL=10, W=100 | +5 bugs | dist2/3/5 |
+| honggfuzzcd | W=5, C=2, CL=5, SR=2 | +1 bug (only) | dist9 — **negative result** |
+
+---
+
+## Infrastructure Notes
+
+- **Cluster**: `eldarfin-309063` (dist11) / new experiment (dist12)
+- **NFS**: `/proj/CDFuzzing` — mounted on all nodes in both experiments
+- **SSH key**: `/proj/CDFuzzing/cluster/ssh/id_rsa` (head `~/.ssh/config` routes 192.168.1.* to it)
+- **Permanent SSH auth**: cluster pubkey in `/etc/ssh/cdfuzz_authorized_keys` on each worker
+  (Emulab keymgmt never touches `/etc/ssh/` so it survives reboots)
+- **CPU constraint**: 8 CPUs per node → 3-wave captain execution for 21 programs
+- **libtiff fix**: `magma/targets/libtiff/fetch.sh` has 3-attempt retry (commit `15974124`);
+  prevents GitLab rate-limit failures when 60 workers clone simultaneously
+- **orchestrate.sh**: does `git pull --ff-only` on each worker before dispatch (commit `65fc953b`)
+- **Repo**: https://github.com/egeberkaygulcan/cdfuzzing.git — HEAD `442831e6`
+
+---
 
 ## Current State
 

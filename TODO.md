@@ -1,8 +1,46 @@
 # TODO
 
-## High Priority
+## Active — dist11 / dist12 / paper
 
-- [x] **dist5 deployed and launched** (2026-06-19 12:39 CDT, `tmux:dist5`)
+- [ ] **Wait for dist11 to complete** — 45/60 workers still running (wave 2/3 due to 8 CPUs/node).
+  Expected: **June 26 ~12:00 CEST** (Thursday noon Amsterdam).
+  Monitor from `eldarfin-309063` head:
+  ```bash
+  echo "done: $(ls /proj/CDFuzzing/distributed/dist11/status/*.done 2>/dev/null | wc -l) / 60"
+  tail -5 /proj/CDFuzzing/dist11_orch.log
+  ```
+
+- [ ] **Launch dist12** (reps 5–9) on NEW CloudLab experiment.
+  - Create experiment with `nodesPerFuzzer=5`, **`repOffset=5`**, `sharedDir=/proj/CDFuzzing`
+  - Wait for boot, then from new head:
+    ```bash
+    cd /local/repository/cloudlab
+    tmux new-session -d -s dist12 \
+      "bash orchestrate.sh --run-id dist12 --timeout 24h --poll 60 \
+         2>&1 | tee /proj/CDFuzzing/dist12_orch.log"
+    ```
+  - Expected completion: **June 28 ~12:00 CEST** (Saturday noon Amsterdam)
+
+- [ ] **Merge dist11 + dist12** after both complete:
+  ```bash
+  mkdir -p /proj/CDFuzzing/distributed/dist11_merged/ar
+  rsync -a /proj/CDFuzzing/distributed/dist11/ar/ /proj/CDFuzzing/distributed/dist11_merged/ar/
+  rsync -a /proj/CDFuzzing/distributed/dist12/ar/ /proj/CDFuzzing/distributed/dist11_merged/ar/
+  ```
+
+- [ ] **Run analysis on merged results**:
+  ```bash
+  CDFUZZ_BASE=/proj/CDFuzzing/distributed/dist11_merged \
+  CDFUZZ_OUTDIR=/proj/CDFuzzing/distributed/dist11_merged/plots \
+  python3 /local/repository/plot_seed4.py
+  ```
+
+- [ ] **Update paper draft** with final configs: AFL++CD SR=1,C=12,CL=25 → +6 bugs on Magma;
+  honggfuzz CD negative result section
+
+## Medium Priority
+
+
 - [x] **dist6 prepared and queued**: honggfuzz UaF fix (zombie approach), 8×3 manifest,
   rep2 SOFT_RESET=1 sweep — commit a0d951f8; auto-launches via `tmux:dist6_wait`
 - [x] **Analyze dist5 results**: honggfuzzcd Δ=+1 with 0 resets confirms UaF was causing the -11
