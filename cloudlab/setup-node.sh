@@ -22,6 +22,7 @@ FUZZER=""
 REP="0"
 FUZZERS=""
 NPF="1"
+REP_START="0"
 REPO="/local/repository"
 SHARED="/proj/CDFuzzing"
 START_IP=10   # first worker is 192.168.1.10 (must match profile.py)
@@ -32,6 +33,7 @@ while [ $# -gt 0 ]; do
         --rep)              REP="$2"; shift 2;;
         --fuzzers)          FUZZERS="$2"; shift 2;;
         --nodes-per-fuzzer) NPF="$2"; shift 2;;
+        --rep-start)        REP_START="$2"; shift 2;;
         --repo)             REPO="$2"; shift 2;;
         --shared)           SHARED="$2"; shift 2;;
         *) echo "unknown arg: $1" >&2; shift;;
@@ -169,8 +171,8 @@ if [ "$ROLE" = "head" ]; then
         ip=$START_IP
         IFS=',' read -r -a FARR <<< "$FUZZERS"
         for f in "${FARR[@]}"; do
-            r=0
-            while [ "$r" -lt "$NPF" ]; do
+            r=$REP_START
+            while [ "$r" -lt "$((REP_START + NPF))" ]; do
                 echo "${f}-${r} 192.168.1.${ip} ${f} ${r}"
                 ip=$((ip + 1))
                 r=$((r + 1))

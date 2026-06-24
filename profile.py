@@ -117,6 +117,12 @@ pc.defineParameter("aggregate", "CloudLab site (aggregate URN)",
                                    "/proj/cdfuzzing-PG0 NFS was created (Wisconsin). Leave as-is "
                                    "unless you have migrated the project storage to another site.")
 
+pc.defineParameter("repOffset", "Repetition offset (first rep index)",
+                   portal.ParameterType.INTEGER, 0, advanced=True,
+                   longDescription="Starting repetition index. Set to 5 for a second experiment "
+                                   "(reps 5-9) that merges with a first experiment (reps 0-4). "
+                                   "Rep IDs appear in the merged ar/<fuzzer>/<target>/<program>/<rep>/ layout.")
+
 pc.defineParameter("bestEffort", "Best-effort LAN (ignore bandwidth)",
                    portal.ParameterType.BOOLEAN, True, advanced=True,
                    longDescription="Recommended for large node counts so the LAN maps even when "
@@ -185,18 +191,19 @@ def make_node(name, ip):
 # --- Head node -------------------------------------------------------------
 head = make_node("head", "192.168.1.1")
 head.addService(pg.Execute(shell="bash", command=boot_command(
-    "head --fuzzers %s --nodes-per-fuzzer %d --repo %s --shared %s" % (
-        ",".join(fuzzers), params.nodesPerFuzzer, params.repoPath, params.sharedDir))))
+    "head --fuzzers %s --nodes-per-fuzzer %d --rep-start %d --repo %s --shared %s" % (
+        ",".join(fuzzers), params.nodesPerFuzzer, params.repOffset, params.repoPath, params.sharedDir))))
 
 # --- Worker nodes ----------------------------------------------------------
 ip_index = 10  # workers occupy 192.168.1.10 .. 192.168.1.(9+total_workers)
 for fuzzer in fuzzers:
     for rep in range(params.nodesPerFuzzer):
-        name = "%s-%d" % (fuzzer, rep)
+        abs_rep = params.repOffset + rep
+        name = "%s-%d" % (fuzzer, abs_rep)
         node = make_node(name, "192.168.1.%d" % ip_index)
         node.addService(pg.Execute(shell="bash", command=boot_command(
             "worker --fuzzer %s --rep %d --repo %s --shared %s" % (
-                fuzzer, rep, params.repoPath, params.sharedDir))))
+                fuzzer, abs_rep, params.repoPath, params.sharedDir))))
         ip_index += 1
 
 pc.printRequestRSpec(request)
