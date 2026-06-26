@@ -87,6 +87,12 @@ drift_detector_t* drift_init(const char* output_dir) {
     env_val = getenv("AFL_DRIFT_COOLDOWN");
     dd->cooldown_threshold = env_val ? (uint32_t)atoi(env_val) : 10;
 
+    /* Soft-reset: number of most-recently-added entries to keep alongside seeds.
+     * 0 (default) = hard reset to initial seeds only.
+     * N > 0 = keep seeds + N most-recent entries, discard middle-aged corpus. */
+    env_val = getenv("AFL_DRIFT_KEEP_RECENT");
+    dd->keep_recent = env_val ? (size_t)atoi(env_val) : 0;
+
     dd->reset_on_drift = true;   /* Always on */
 
     /* Allocate history buffers */
@@ -140,10 +146,11 @@ drift_detector_t* drift_init(const char* output_dir) {
     }
 
     LOG_I("Drift detection enabled:");
-    LOG_I("  Value drift: window=%u, threshold=%.3f, consecutive=%u, cooldown=%u, reset=%s",
+    LOG_I("  Value drift: window=%u, threshold=%.3f, consecutive=%u, cooldown=%u, reset=%s, keep_recent=%zu",
           dd->window_size, dd->drift_threshold,
           dd->consecutive_threshold, dd->cooldown_threshold,
-          dd->reset_on_drift ? "ON" : "OFF");
+          dd->reset_on_drift ? "ON" : "OFF",
+          dd->keep_recent);
 
     return dd;
 }

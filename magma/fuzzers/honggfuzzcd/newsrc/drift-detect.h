@@ -62,6 +62,10 @@ typedef struct {
     /* Initial corpus size (for reset) */
     size_t   initial_corpus_count;
 
+    /* Soft-reset: number of most-recently-added corpus entries to keep on reset.
+     * 0 = hard reset (keep seeds only).  Set via AFL_DRIFT_KEEP_RECENT. */
+    size_t   keep_recent;
+
     /* Diagnostics (populated each drift_check_value call for CSV logging) */
     double   last_p_value;
     double   last_growth_rate;
