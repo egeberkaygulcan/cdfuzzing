@@ -2,7 +2,107 @@
 
 ---
 
-## distributed (CloudLab): dist10 — 12 fuzzers × 5 reps × 24h, full paper run (RUNNING)
+## distributed (CloudLab): dist14 — honggfuzz + honggfuzzcd, 10 reps × 24h, soft reset (PLANNED)
+
+Goal: Validate new **AFL_DRIFT_KEEP_RECENT** soft reset for honggfuzzcd across 10 paired reps.
+dist11/12/13 used hard reset (KEEP_RECENT=0); this run tests KEEP_RECENT=50 to check whether
+retaining recent corpus discoveries eliminates the coverage cliff seen in dist3–dist9.
+
+Design:
+- Fuzzers: honggfuzz (baseline) + honggfuzzcd (with soft reset)
+- Reps: 0–9 (FUZZER_SEED=1000–1009 — same seeds as dist11/12/13 for paired comparison)
+- Targets: all 9 Magma targets (21 programs)
+- Timeout: 24h
+- Workers: 20 (10 reps × 2 fuzzers) + 1 head = **21 nodes total**
+
+CPU sizing:
+- `honggfuzz -n 1` → 1 thread per campaign
+- 21 programs run in parallel per worker → 21 CPUs consumed
+- 32-CPU nodes (AMD d7515 / equivalent): 21/32 = 66% utilisation, comfortable headroom
+
+honggfuzzcd parameters:
+| Param | Value | Notes |
+|---|---|---|
+| AFL_DRIFT_WINDOW | 5 | corpus size window (minutes) |
+| AFL_DRIFT_CONSECUTIVE | 2 | consecutive stagnation windows to trigger |
+| AFL_DRIFT_COOLDOWN | 5 | minutes post-reset before re-triggering |
+| AFL_DRIFT_KEEP_RECENT | 50 | **NEW** — retain 50 most-recent dynfile_t entries on reset |
+| FUZZER_SEED | 1000+rep | shared with honggfuzz baseline for paired comparison |
+
+All reps identical (genuine statistical repetitions, not a sweep).
+Commit required: update `cloudlab/worker-run.sh` to set `AFL_DRIFT_KEEP_RECENT` for honggfuzzcd.
+
+Launch command (from Wisconsin head):
+```bash
+cd /local/repository/cloudlab
+bash orchestrate.sh --run-id dist14 --timeout 24h --fuzzers "honggfuzz honggfuzzcd" --poll 60
+```
+
+Manifest: 21 entries (1 head + 10 honggfuzz workers + 10 honggfuzzcd workers).
+Results: `/proj/CDFuzzing/distributed/dist14/ar/`
+
+Status: **PLANNED**
+
+---
+
+## distributed (CloudLab): dist11+dist12 merged — 8 reps × 24h × 12 fuzzers (CURRENT)
+
+8-rep merged evaluation (reps 0–7) combining dist11 and dist12.
+⚠ **Paper table (`content/evaluation.tex`) still shows old single-rep values — needs update after dist13 (10-rep data).**
+
+### 8-Rep Summary (2026-06-26, corrected)
+
+Δbugs columns: **avg** = mean bugs-found delta across all 8 reps; **uni** = union-bugs delta
+(CD union − baseline union). Resets = per-rep average across 8 reps.
+Old single-rep Δbugs were wrong (always rep 0 artifact); these are the correct multi-rep values.
+
+| Pair | Δcov | Δbugs avg | Δbugs uni | Resets/rep |
+|---|---|---|---|---|
+| afl → aflcd | **+0.5%** | -0.9 | -2 | 20 |
+| aflfast → aflfastcd | **+1.8%** | +0.7 | +2 | 8 |
+| moptafl → moptaflcd | **+3.9%** | +3.4 | +6 | 82 |
+| aflplusplus → aflpluspluscd | -2.2% | -2.6 | +1 | 12 |
+| fairfuzz → fairfuzzcd | -1.8% | -0.1 | +6 | 9 |
+| honggfuzz → honggfuzzcd | -- | -2.4 | +4 | 5 |
+
+Data: `/proj/CDFuzzing/distributed/merged/ar/` (1,995 symlinks → dist11 + dist12)
+Summary: `/proj/CDFuzzing/distributed/merged/plots/summary_table.txt`
+
+---
+
+## distributed (CloudLab): dist12 — 12 fuzzers × 3 reps × 24h, reps 5–7 (COMPLETE)
+
+Extension run on Utah cluster2 (`eldarfin-309225`). See CLUSTER2.md for full infrastructure details.
+
+| Property | Value |
+|---|---|
+| Reps | 5, 6, 7 (FUZZER_SEED = 1005–1007) |
+| Workers | 36/36 done, 0 failed |
+| Completed | ~07:35 CDT 2026-06-26 |
+| Results (Utah NFS) | `/proj/cdfuzzing-PG0/distributed/dist12/ar/` |
+| Results (Wisconsin NFS) | `/proj/CDFuzzing/distributed/dist12/ar/` |
+| Commit | same as dist11 |
+
+Note: aflfast/sqlite3 rep 1 missing (campaign failed on Utah). Merged tree has 1,995 symlinks
+(2,016 max − 21 for the missing campaigns).
+
+---
+
+## distributed (CloudLab): dist11 — 12 fuzzers × 5 reps × 24h, reps 0–4 (COMPLETE)
+
+Re-run of lost dist10 with libtiff GitLab retry fix (commit `15974124`).
+
+| Property | Value |
+|---|---|
+| Reps | 0, 1, 2, 3, 4 (FUZZER_SEED = 1000–1004) |
+| Workers | 60/60 done, 0 failed |
+| Completed | ~05:35 CDT 2026-06-26 |
+| Results | `/proj/CDFuzzing/distributed/dist11/ar/` |
+| Commit | `0271863d` |
+
+---
+
+## distributed (CloudLab): dist10 — 12 fuzzers × 5 reps × 24h, full paper run (LOST)
 
 Goal: **Publication-quality comparative evaluation** of all 6 CD-fuzzer variants against their
 baselines. First run with (a) all 12 fuzzers, (b) confirmed best params for every fuzzer,
@@ -25,17 +125,29 @@ CD parameters (confirmed best from dist2–dist9):
 | aflfastcd | 100 | 3 | 10 | 1 | dist2 +5 bugs; dist5 +5 bugs |
 | honggfuzzcd | 5 | 2 | 5 | 2 | dist9 rep0: +1 bug, 10 resets |
 
+> **⚠ Threat to validity (reset mechanism heterogeneity):** The SR column means fundamentally
+> different things for AFL-based vs. honggfuzz fuzzers. For AFL (SR=1): *no corpus entries are
+> removed* — the fuzzer state machine resets (`was_fuzzed=0`, `passed_det=0` on favored entries),
+> re-running the existing corpus with fresh deterministic + havoc passes. For honggfuzz
+> (`AFL_DRIFT_KEEP_RECENT`): entries are *physically removed* from the TAILQ (corpus pruning to
+> seeds + N recent). These are categorically different operations — one is a mutation-strategy
+> reset, the other is a structural corpus reduction. A reviewer could argue that "corpus drift
+> reset" is not a uniform intervention across the 6 pairs. Potential mitigation: acknowledge
+> the heterogeneity in the paper and justify that both address the same root problem (stagnation)
+> via the mechanism that is meaningful for each fuzzer's architecture.
+
 Launch: `tmux:dist10`, 2026-06-22 07:43 CDT.
 Expected finish: 2026-06-23 ~07:45 CDT.
 Orch log: `/proj/cdfuzzing-PG0/distributed/dist10_orch.log`
 Results: `/proj/cdfuzzing-PG0/distributed/dist10/ar/`
 Plots: `/proj/cdfuzzing-PG0/distributed/dist10/plots/`
 
-Status: **RUNNING**
+Status: **LOST** — CloudLab lease expired ~22:36 CDT 2026-06-22 (~14h into run). All data wiped
+on node deallocation. Re-run as dist11 (reps 0–4, Wisconsin) + dist12 (reps 5–7, Utah).
 
 ### Results
 
-*(pending — expected 2026-06-23 ~07:45 CDT)*
+**DATA LOST.** See dist11 and dist12 entries above for results.
 
 ---
 
