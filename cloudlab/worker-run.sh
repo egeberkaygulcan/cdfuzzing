@@ -112,6 +112,7 @@ CD_COOLDOWN=10
 CD_WINDOW=100
 CD_SOFT_RESET=2
 CD_HAVOC_BOOST=2
+CD_KEEP_RECENT=0   # AFL_DRIFT_KEEP_RECENT: 0=hard reset (default), N=keep N most-recent entries
 
 case "$FUZZER" in
     # --- AFL-based CD fuzzers: confirmed best params, all reps identical --------
@@ -133,15 +134,10 @@ case "$FUZZER" in
         ;;
     # --- honggfuzzcd: sweep mode for dist10 ------------------------------------
     honggfuzzcd)
-        case "$REP" in
-            0) CD_WINDOW=5; CD_CONSECUTIVE=2;  CD_COOLDOWN=5  ;;
-            1) CD_WINDOW=5; CD_CONSECUTIVE=3;  CD_COOLDOWN=10 ;;
-            2) CD_WINDOW=5; CD_CONSECUTIVE=5;  CD_COOLDOWN=15 ;;
-            3) CD_WINDOW=5; CD_CONSECUTIVE=8;  CD_COOLDOWN=25 ;;
-            4) CD_WINDOW=5; CD_CONSECUTIVE=10; CD_COOLDOWN=25 ;;
-            5) CD_WINDOW=5; CD_CONSECUTIVE=3;  CD_COOLDOWN=3  ;;
-            *) CD_WINDOW=5; CD_CONSECUTIVE=2;  CD_COOLDOWN=5  ;;  # reps 6+: use best-known config
-        esac
+        # dist14 confirmed best: W=5 C=2 CL=5 (dist9 rep0: +1 bug, 10 resets).
+        # All reps identical — genuine statistical repetitions.
+        # AFL_DRIFT_KEEP_RECENT=50: soft corpus reset (keep 50 most-recent entries).
+        CD_WINDOW=5; CD_CONSECUTIVE=2; CD_COOLDOWN=5; CD_KEEP_RECENT=50
         ;;
 esac
 log "seed=$FUZZER_SEED CD params: W=$CD_WINDOW C=$CD_CONSECUTIVE SR=$CD_SOFT_RESET BOOST=$CD_HAVOC_BOOST CL=$CD_COOLDOWN SF=$CD_STAGNATION"
@@ -174,6 +170,7 @@ CAPTAINRC="$LOCALWORK/captainrc_${NODE_TAG}"
     echo "export AFL_DRIFT_CONSECUTIVE=$CD_CONSECUTIVE"
     echo "export AFL_DRIFT_EMA_ALPHA=0.1"
     echo "export AFL_DRIFT_STAGNATION_FACTOR=$CD_STAGNATION"
+    echo "export AFL_DRIFT_KEEP_RECENT=$CD_KEEP_RECENT"
 } > "$CAPTAINRC"
 log "captainrc -> $CAPTAINRC"
 
@@ -204,6 +201,7 @@ for cid_dir in "$LOCALWORK"/ar/"$FUZZER"/*/*/0; do
     if rsync -a \
         --exclude 'queue/' \
         --exclude 'corpus/' \
+        --exclude 'output/' \
         --exclude '*.honggfuzz.cov' \
         --exclude '.cur_input' \
         --exclude '.synced/' \

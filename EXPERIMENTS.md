@@ -17,19 +17,14 @@ Design:
 
 CPU sizing (Wisconsin nodes: **8 CPUs each**):
 - `honggfuzz -n 1` → 1 CPU per campaign
-- 21 programs cannot all run in parallel on 8 CPUs — split into 3 node slots per (fuzzer × rep)
-- Each node runs a **target subset** of ≤8 programs in parallel → fits exactly in 8 CPUs
+- 21 programs in parallel → 21/8 = **2.6× oversubscription per node**
+- honggfuzz is I/O-bound (fork+exec target, not CPU-bound), so moderate oversubscription is acceptable
+- Both honggfuzz and honggfuzzcd run on equivalent nodes → comparison remains valid
+- **1 node per (fuzzer × rep)**: 10 reps × 2 fuzzers = 20 workers + 1 head = **21 nodes total**
 
-Program split across 3 node slots (21 programs total):
-| Slot | Targets | Programs | CPUs used |
-|---|---|---|---|
-| A | sqlite3, libpng, lua, libsndfile, libxml2 | 1+2+1+2+2 = **8** | 8/8 = 100% |
-| B | libtiff, poppler | 4+3 = **7** | 7/8 = 88% |
-| C | php, openssl | 4+2 = **6** | 6/8 = 75% |
-
-Manifest: 61 entries — 1 head + 3 slots × 10 reps × 2 fuzzers = 60 workers.
-Requires manifest to carry a 5th `targets` column (e.g. `honggfuzz-0-a  ip  honggfuzz  0  "sqlite3 libpng lua libsndfile libxml2"`),
-and `worker-run.sh` / `orchestrate.sh` to pass it as `--targets` override when present.
+Manifest: 21 entries — 1 head + 10 honggfuzz workers (192.168.1.10–.19) + 10 honggfuzzcd workers (192.168.1.20–.29).
+Requires: update `cloudlab/worker-run.sh` to set `AFL_DRIFT_KEEP_RECENT=50` for honggfuzzcd
+and exclude `output/` from rsync (honggfuzz corpus, analogous to AFL's `queue/`).
 
 honggfuzzcd parameters:
 | Param | Value | Notes |
@@ -49,7 +44,7 @@ cd /local/repository/cloudlab
 bash orchestrate.sh --run-id dist14 --timeout 24h --fuzzers "honggfuzz honggfuzzcd" --poll 60
 ```
 
-Manifest: 61 entries (1 head + 3 slots × 10 reps × 2 fuzzers = 60 workers).
+Manifest: 21 entries (1 head + 10 honggfuzz workers + 10 honggfuzzcd workers).
 Results: `/proj/CDFuzzing/distributed/dist14/ar/`
 
 Status: **PLANNED**
