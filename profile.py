@@ -49,6 +49,7 @@ import geni.rspec.pg as pg
 # ---------------------------------------------------------------------------
 BASELINE_FUZZERS = ["afl", "aflplusplus", "fairfuzz", "moptafl", "aflfast", "honggfuzz"]
 CD_FUZZERS = ["aflcd", "aflpluspluscd", "fairfuzzcd", "moptaflcd", "aflfastcd", "honggfuzzcd"]
+VARIANT_FUZZERS = ["aflcd_v2", "aflcd_v3", "aflfastcd_v2", "aflfastcd_v3"]
 ALL_FUZZERS = BASELINE_FUZZERS + CD_FUZZERS
 
 pc = portal.Context()
@@ -76,7 +77,9 @@ pc.defineParameter("fuzzerSet", "Fuzzers to deploy", portal.ParameterType.STRING
                    [("all", "All 12 (6 baseline + 6 CD)"),
                     ("baselines", "6 baselines only"),
                     ("cd", "6 CD variants only")],
-                   longDescription="Which fuzzers receive worker nodes.")
+                   longDescription="Which fuzzers receive worker nodes. Also accepts a "
+                                   "comma-separated list of fuzzer names for custom subsets, "
+                                   "e.g. 'aflfast,aflfastcd_v3' for a focused 2-fuzzer experiment.")
 
 pc.defineParameter("nodesPerFuzzer", "Worker nodes per fuzzer",
                    portal.ParameterType.INTEGER, 2,
@@ -106,9 +109,11 @@ pc.defineParameter("repoPath", "cdfuzzing repo path (per-node git checkout)",
                                    "directories are NOT NFS-shared on this cluster; only /proj is.")
 
 pc.defineParameter("sharedDir", "Shared merge directory (project NFS)",
-                   portal.ParameterType.STRING, "/proj/cdfuzzing-PG0", advanced=True,
+                   portal.ParameterType.STRING, "/proj/CDFuzzing", advanced=True,
                    longDescription="Project NFS share mounted on every node; merged results and "
-                                   "DONE markers are written under here.")
+                                   "DONE markers are written under here. "
+                                   "Wisconsin: /proj/CDFuzzing (100G). "
+                                   "Utah: /proj/cdfuzzing-PG0 (37G quota, often full).")
 
 pc.defineParameter("aggregate", "CloudLab site (aggregate URN)",
                    portal.ParameterType.STRING,
@@ -143,8 +148,11 @@ if params.fuzzerSet == "baselines":
     fuzzers = BASELINE_FUZZERS
 elif params.fuzzerSet == "cd":
     fuzzers = CD_FUZZERS
-else:
+elif params.fuzzerSet == "all":
     fuzzers = ALL_FUZZERS
+else:
+    # Custom comma-separated list, e.g. "aflfast,aflfastcd_v3"
+    fuzzers = [f.strip() for f in params.fuzzerSet.split(",") if f.strip()]
 
 total_workers = len(fuzzers) * params.nodesPerFuzzer
 if 1 + total_workers > 240:

@@ -13,15 +13,17 @@ dist15 had 0 sqlite3 resets in 5 reps (CL=25 suppresses re-triggering too aggres
 counter; CL=10 (not 25) allows multiple resets per campaign, giving more chances to hit
 sqlite3-type stagnation.
 
-Status: **PLANNED** — Utah cluster (eldarfin-309225) provisioned, 36 workers + head idle.
-SSH access broken (Emulab keymgmt wiped cluster key). See Pre-launch checklist below.
+Status: **PLANNED** — Utah NFS quota exhausted by CloudLab images/VMs (29G out of 37G quota
+immovable). Utah workers' SSH broken (local home dir, not NFS-shared — keymgmt wipe is permanent).
+**Run on Wisconsin** using a new fresh cluster with `sharedDir=/proj/CDFuzzing`.
 
 Design:
 - Fuzzers: **aflfast** (baseline) + **aflfastcd_v3** (variant)
-- Reps: 3 (repurpose the 3 aflfastcd workers .40–.42 for v3, 3 aflfast workers .22–.24 for baseline)
+- Reps: 5 (5 nodes per fuzzer = 10 workers + 1 head = 11 nodes)
 - Targets: all 9 Magma targets (21 programs)
 - Timeout: 24h
-- Workers: 6 (existing idle nodes on eldarfin-309225)
+- Cluster: Wisconsin CloudLab, `fuzzerSet=aflfast,aflfastcd_v3`, `nodesPerFuzzer=5`
+- NFS: `/proj/CDFuzzing` (100G, has free space)
 
 aflfastcd_v3 parameters:
 | Param | Value | Change from default | Rationale |
@@ -32,65 +34,31 @@ aflfastcd_v3 parameters:
 | AFL_DRIFT_WINDOW | 100 | unchanged | |
 | AFL_DRIFT_THRESHOLD | 0.05 | unchanged | |
 
-**Pre-launch checklist (run on Utah head amd131.utah.cloudlab.us):**
+**Pre-launch checklist (provision fresh cluster from CloudLab portal):**
 
-1. **Free NFS space** — dist13/dist15 are safe to delete (data on Wisconsin):
+1. **Check Wisconsin NFS has space:**
 ```bash
-# Both dist13 and dist15 are on Wisconsin; seed tarballs are from April 2026
-rm -rf /proj/cdfuzzing-PG0/distributed/dist13 /proj/cdfuzzing-PG0/distributed/dist15
-rm -f /proj/cdfuzzing-PG0/seed1_full.tar.gz /proj/cdfuzzing-PG0/seed1_full_backup.tar.gz
-rm -f /proj/cdfuzzing-PG0/seed2_full.tar.gz
-# Expect ~42G freed; NFS should drop from 100% to ~38% full
-df -h /proj/cdfuzzing-PG0
+df -h /proj/CDFuzzing
 ```
 
-2. **Restore worker SSH** — run fix-ssh-workers.sh to install the sshd drop-in:
-```bash
-cd /local/repository
-git pull --ff-only   # pick up updated setup-node.sh and fix-ssh-workers.sh
-bash cloudlab/fix-ssh-workers.sh --shared /proj/cdfuzzing-PG0
-# Expected: "Verified: 36/36 workers reachable"
-```
+2. **Provision fresh cluster** at cloudlab.us → Experiments → Start → cdfuzzing profile:
+   - `fuzzerSet`: `aflfast,aflfastcd_v3`
+   - `nodesPerFuzzer`: `5`
+   - `sharedDir`: `/proj/CDFuzzing`
+   - `aggregate`: `wisc.cloudlab.us` (Wisconsin)
+   - Estimated nodes: 10 workers + 1 head = 11
 
-3. **Write dist16 manifest** — aflfastcd_v3 workers are .40/.41/.42, aflfast workers are .22/.23/.24:
+3. **Wait for all nodes to be READY** (~10–15 min for Docker + image build). Then on the head:
 ```bash
-mkdir -p /proj/cdfuzzing-PG0/cluster
-cat > /proj/cdfuzzing-PG0/cluster/manifest.txt << 'EOF'
-# name ip fuzzer rep   (dist16 - aflfastcd_v3 vs aflfast, 3 reps)
-head 192.168.1.1 - -
-aflfast-0 192.168.1.22 aflfast 0
-aflfast-1 192.168.1.23 aflfast 1
-aflfast-2 192.168.1.24 aflfast 2
-aflfastcd_v3-0 192.168.1.40 aflfastcd_v3 0
-aflfastcd_v3-1 192.168.1.41 aflfastcd_v3 1
-aflfastcd_v3-2 192.168.1.42 aflfastcd_v3 2
-EOF
-```
-
-4. **Launch**:
-```bash
-cd /local/repository/cloudlab
-bash orchestrate.sh --run-id dist16 --timeout 24h \
+cd /local/repository && git pull --ff-only
+bash cloudlab/orchestrate.sh --run-id dist16 --timeout 24h \
     --fuzzers "aflfast aflfastcd_v3" \
-    --shared /proj/cdfuzzing-PG0 \
+    --shared /proj/CDFuzzing \
     --poll 60
 ```
 
-5. **After completion** — pull results to Wisconsin (Utah NFS may fill again):
-```bash
-# On Utah head, for each worker:
-for rep in 0 1 2; do
-    for fuzzer in aflfast aflfastcd_v3; do
-        rsync -r --mkpath 192.168.1.X:/mydata/dist16/ar/$fuzzer/ \
-            head:/mydata/dist16/ar/$fuzzer/
-    done
-done
-# Then from Wisconsin head:
-rsync -r amd131.utah.cloudlab.us:/mydata/dist16/ar/ /mydata/dist16/ar/
-```
-
-Results (after pull): `/mydata/dist16/ar/`
-Analysis: run `analyze_dist15.py` with DIST15_AR pointing to dist16 data.
+Results: `/proj/CDFuzzing/distributed/dist16/ar/`
+Analysis: adapt `analyze_dist15.py` with `DIST15_AR=/proj/CDFuzzing/distributed/dist16/ar`.
 
 ---
 
