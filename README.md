@@ -78,13 +78,41 @@ magma/
       captainrc           Default configuration (edit to customize campaigns)
       run.sh              Launch campaigns from a captainrc
 run_local.sh              Evaluation entry point (wraps captain)
-plot_seed4.py             Analysis script: coverage + bug delta tables and plots
 ```
 
 **CD module source** (the core implementation):
 - `magma/fuzzers/aflcd/newsrc/afl-drift-detect.c` — KS test, EMA stagnation guard, soft reset
 - `magma/fuzzers/aflcd/newsrc/afl-drift-detect.h` — struct and function declarations
 - honggfuzz uses an equivalent module under `magma/fuzzers/honggfuzzcd/`
+
+---
+
+## Kick the Tires (~10 minutes)
+
+Verify that the artifact builds and that the drift detection module fires before committing to a full evaluation.
+
+```bash
+bash run_local.sh --kick-the-tires
+```
+
+This runs AFL (baseline) and AFLCD side-by-side on `libpng` for 10 minutes using deliberately aggressive CD parameters (window=5, consecutive=1, cooldown=1, stagnation guard disabled) so that at least one corpus reset fires within the short window.
+
+On completion the script checks:
+1. Both containers exited without error.
+2. The CD module produced a drift log for AFLCD.
+3. At least one reset is recorded in that log.
+
+Expected output:
+```
+[OK]   drift_log.csv found: .../ar/aflcd/libpng/libpng_read_fuzzer/0/findings/drift_log.csv
+[OK]   4 reset(s) recorded in drift log.
+
+==============================
+ KICK-THE-TIRES: PASSED
+==============================
+```
+
+If this is your first run, Docker will build the `afl` and `aflcd` images first (add ~5–10 minutes).
 
 ---
 
@@ -150,22 +178,9 @@ bash run_local.sh \
 
 ## Analyzing Results
 
-`plot_seed4.py` reads the campaign output and produces the tables and plots from the paper.
+An analysis script for computing per-program coverage deltas, bug-finding deltas, and stagnation guard statistics from the campaign output will be provided separately.
 
-```bash
-CDFUZZ_BASE=./results/trial \
-CDFUZZ_OUTDIR=./results/trial/plots \
-  python3 plot_seed4.py
-```
-
-Output files in `$CDFUZZ_OUTDIR`:
-
-| File | Contents |
-|---|---|
-| `summary_table.txt` | Per-program Δcov and Δbugs for each fuzzer pair |
-| `bug_report.txt` | Bug IDs found by each CD variant vs. its baseline |
-| `parameter_eval.txt` | Guard statistics: drifts detected, resets fired, suppression rate |
-| `*.png` | Coverage-over-time plots per target |
+Campaign output is written to `<outdir>/ar/<fuzzer>/<target>/<program>/<rep>/` and contains standard AFL `fuzzer_stats`, plot data, and a `findings/drift_log.csv` for CD variants.
 
 ---
 
@@ -204,9 +219,9 @@ CD parameters are passed as environment variables. Baseline fuzzers ignore them 
 
 | Claim | How to reproduce |
 |---|---|
-| Δcov improvement in 5/6 pairs (Table 1) | Full 10-rep eval → `summary_table.txt` |
-| +13 total unique bugs (RQ2) | Same → `bug_report.txt` |
-| 95.5% drift suppression rate (RQ3, Table 2) | Same → `parameter_eval.txt` |
+| Δcov improvement in 5/6 pairs (Table 1) | Full 10-rep eval, analyze `ar/` output |
+| +13 total unique bugs (RQ2) | Same |
+| 95.5% drift suppression rate (RQ3, Table 2) | Same |
 | sqlite3 large coverage gain (+23–57%) | Run any CD pair with `--targets sqlite3` |
 
 ---

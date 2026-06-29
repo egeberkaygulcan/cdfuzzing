@@ -9,6 +9,8 @@
 #   bash run_local.sh [OPTIONS]
 #
 # Options:
+#   --kick-the-tires         Quick sanity check: builds images, runs 10-min campaign,
+#                            verifies drift detection fires (see below)
 #   --fuzzers  "F1 F2 ..."   Fuzzers to run (default: "afl aflcd")
 #   --targets  "T1 T2 ..."   Magma targets  (default: "sqlite3 libpng")
 #   --timeout  DURATION      Per-campaign duration: 10m, 1h, 24h (default: 1h)
@@ -18,6 +20,16 @@
 #   --seed     N             Base FUZZER_SEED; rep i uses seed+i (default: 1000)
 #   --help                   Show this message
 #
+# Kick-the-tires mode (--kick-the-tires):
+#   Runs AFL (baseline) and AFLCD side-by-side on libpng for 10 minutes using
+#   deliberately aggressive CD parameters (W=5, C=1, CL=1, guard disabled) so
+#   that at least one corpus reset fires within the short window. On exit it
+#   checks that:
+#     1. Both campaigns completed without error.
+#     2. The CD module produced a drift log for aflcd.
+#     3. At least one reset was recorded in that log.
+#   Typical runtime: ~10 minutes (image build time on first run: +5-10 minutes).
+#
 # Example — quick single pair:
 #   bash run_local.sh --fuzzers "afl aflcd" --targets "sqlite3" --timeout 1h --reps 2
 #
@@ -26,9 +38,6 @@
 #     --fuzzers "afl aflcd" \
 #     --targets "sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl" \
 #     --timeout 24h --reps 10 --outdir ./results/afl_pair
-#
-# Analyzing results after the run:
-#   CDFUZZ_BASE=<outdir> CDFUZZ_OUTDIR=<outdir>/plots python3 plot_seed4.py
 ##
 set -euo pipefail
 
@@ -44,6 +53,7 @@ REPS=1
 OUTDIR="$SCRIPT_DIR/workdir"
 WORKERS=""
 BASE_SEED=1000
+KICK_THE_TIRES=0
 
 # --- Parse arguments ---
 while [[ $# -gt 0 ]]; do
@@ -54,7 +64,8 @@ while [[ $# -gt 0 ]]; do
         --reps)     REPS="$2";     shift 2 ;;
         --outdir)   OUTDIR="$2";   shift 2 ;;
         --workers)  WORKERS="$2";  shift 2 ;;
-        --seed)     BASE_SEED="$2"; shift 2 ;;
+        --seed)            BASE_SEED="$2"; shift 2 ;;
+        --kick-the-tires)  KICK_THE_TIRES=1; shift ;;
         --help|-h)
             sed -n '/^# Usage/,/^##$/p' "$0" | sed 's/^# \?//'
             exit 0
@@ -62,6 +73,21 @@ while [[ $# -gt 0 ]]; do
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
+
+# --- Kick-the-tires mode overrides -----------------------------------------
+if [[ "$KICK_THE_TIRES" -eq 1 ]]; then
+    FUZZERS="afl aflcd"
+    TARGETS="libpng"
+    TIMEOUT="10m"
+    REPS=1
+    OUTDIR="${OUTDIR:-$SCRIPT_DIR/workdir-ktt}"
+    # Aggressive CD parameters so a reset fires within 10 minutes:
+    #   W=5    (tiny window — drift detected almost immediately after stagnation)
+    #   C=1    (fire on the very first confirmed stagnant window)
+    #   CL=1   (minimal cooldown — allow rapid successive resets)
+    #   SF=0.0 (disable EMA stagnation guard — never suppress the KS test)
+    KTT_CD_OVERRIDE="AFL_DRIFT_WINDOW=5 AFL_DRIFT_CONSECUTIVE=1 AFL_DRIFT_COOLDOWN=1 AFL_DRIFT_STAGNATION_FACTOR=0.0"
+fi
 
 # --- Validate ---
 if ! command -v docker &>/dev/null; then
@@ -79,6 +105,12 @@ fi
 # Override by exporting AFL_DRIFT_* variables before calling this script.
 cd_params_for() {
     local fuzzer="$1"
+    # In kick-the-tires mode, CD fuzzers use aggressive parameters instead.
+    if [[ "$KICK_THE_TIRES" -eq 1 ]]; then
+        case "$fuzzer" in
+            *cd) echo "$KTT_CD_OVERRIDE AFL_DRIFT_SOFT_RESET=1 AFL_DRIFT_HAVOC_BOOST=1"; return ;;
+        esac
+    fi
     case "$fuzzer" in
         aflcd)
             echo "AFL_DRIFT_WINDOW=100 AFL_DRIFT_CONSECUTIVE=3 AFL_DRIFT_COOLDOWN=10 AFL_DRIFT_SOFT_RESET=1 AFL_DRIFT_HAVOC_BOOST=1"
@@ -111,7 +143,11 @@ FUZZERS_ARRAY=($FUZZERS)
 TARGETS_ARRAY=($TARGETS)
 
 echo "=========================================="
-echo " Drift-Aware Fuzzing — Local Evaluation"
+if [[ "$KICK_THE_TIRES" -eq 1 ]]; then
+    echo " Drift-Aware Fuzzing — Kick the Tires"
+else
+    echo " Drift-Aware Fuzzing — Local Evaluation"
+fi
 echo "=========================================="
 echo "  Fuzzers:  $FUZZERS"
 echo "  Targets:  $TARGETS"
@@ -200,7 +236,54 @@ echo ""
 echo "=========================================="
 echo " All campaigns complete."
 echo " Results: $OUTDIR/ar/"
-echo ""
-echo " Analyze with:"
-echo "   CDFUZZ_BASE=$OUTDIR CDFUZZ_OUTDIR=$OUTDIR/plots python3 $SCRIPT_DIR/plot_seed4.py"
 echo "=========================================="
+
+# --- Kick-the-tires verification -------------------------------------------
+if [[ "$KICK_THE_TIRES" -eq 1 ]]; then
+    echo ""
+    echo "--- Kick-the-tires checks ---"
+    KTT_PASS=1
+
+    # 1. Drift log must exist for aflcd (confirms the CD module ran).
+    DRIFT_LOG=$(find "$OUTDIR/ar/aflcd" -name "drift_log.csv" 2>/dev/null | head -1)
+    if [[ -z "$DRIFT_LOG" ]]; then
+        echo "[FAIL] drift_log.csv not found under $OUTDIR/ar/aflcd/"
+        echo "       The CD module did not produce output. Check that the aflcd"
+        echo "       Docker image built correctly (look for build errors above)."
+        KTT_PASS=0
+    else
+        echo "[OK]   drift_log.csv found: $DRIFT_LOG"
+
+        # 2. At least one reset must have been recorded.
+        RESET_COUNT=$(awk -F',' 'NR>1 && $NF=="1" {c++} END {print c+0}' "$DRIFT_LOG" 2>/dev/null)
+        # Fallback: count lines containing "reset" (case-insensitive) if column check yields 0.
+        if [[ "$RESET_COUNT" -eq 0 ]]; then
+            RESET_COUNT=$(grep -ci "reset" "$DRIFT_LOG" 2>/dev/null || true)
+        fi
+
+        if [[ "$RESET_COUNT" -gt 0 ]]; then
+            echo "[OK]   $RESET_COUNT reset(s) recorded in drift log."
+        else
+            echo "[WARN] No resets found in drift_log.csv."
+            echo "       The CD module ran but did not trigger a reset in 10 minutes."
+            echo "       This is unexpected with the aggressive kick-the-tires parameters."
+            echo "       Inspect $DRIFT_LOG to see what p-values were recorded."
+            KTT_PASS=0
+        fi
+    fi
+
+    echo ""
+    if [[ "$KTT_PASS" -eq 1 ]]; then
+        echo "=============================="
+        echo " KICK-THE-TIRES: PASSED"
+        echo "=============================="
+        echo " The drift detection module is working correctly."
+        echo " Proceed with a full evaluation using --timeout 24h --reps 10."
+    else
+        echo "=============================="
+        echo " KICK-THE-TIRES: FAILED"
+        echo "=============================="
+        echo " See [FAIL] / [WARN] messages above for next steps."
+        exit 1
+    fi
+fi
