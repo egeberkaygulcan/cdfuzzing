@@ -32,7 +32,7 @@ Drift-aware fuzzing augments coverage-guided fuzzers with a lightweight statisti
 | Requirement | Notes |
 |---|---|
 | Linux x86-64 | Ubuntu 20.04 or 22.04 recommended |
-| Docker | 20.10 or later; see [docker_setup.sh](docker_setup.sh) |
+| Docker | 20.10 or later |
 | bash | 4.0 or later |
 | Python 3 | 3.8 or later, with `pandas`, `scipy`, `matplotlib` |
 | RAM | >= 8 GB (16 GB recommended for parallel campaigns) |
@@ -47,7 +47,9 @@ pip3 install pandas scipy matplotlib
 Enable Docker for your user (if not already configured):
 
 ```bash
-sudo bash docker_setup.sh
+sudo groupadd docker 2>/dev/null; sudo usermod -aG docker $USER
+sudo systemctl start docker
+newgrp docker
 ```
 
 ---
@@ -75,53 +77,18 @@ magma/
     captain/              Campaign orchestration engine
       captainrc           Default configuration (edit to customize campaigns)
       run.sh              Launch campaigns from a captainrc
-cloudlab/
-  setup-node.sh           One-time node setup (Docker relocation, SSH keys)
-  orchestrate.sh          Head-node dispatcher for distributed runs
-  worker-run.sh           Per-worker campaign launcher with CD parameter tables
-  merge-results.sh        Post-run inventory and analysis trigger
-run_local.sh              Single-machine evaluation entry point (wraps captain)
-smoke_test_all_cd.sh      Quick build-and-run verification (~15 min)
-smoke_test_aflpluspluscd.sh  AFL++ CD-specific smoke test
+run_local.sh              Evaluation entry point (wraps captain)
 plot_seed4.py             Analysis script: coverage + bug delta tables and plots
 ```
 
 **CD module source** (the core implementation):
 - `magma/fuzzers/aflcd/newsrc/afl-drift-detect.c` — KS test, EMA stagnation guard, soft reset
 - `magma/fuzzers/aflcd/newsrc/afl-drift-detect.h` — struct and function declarations
-- Honggfuzz uses an equivalent module under `magma/fuzzers/honggfuzzcd/`
+- honggfuzz uses an equivalent module under `magma/fuzzers/honggfuzzcd/`
 
 ---
 
-## Quick Verification (~15 minutes)
-
-Build all six CD fuzzer Docker images and run a 10-minute campaign on `libpng` to confirm that drift detection fires at least once:
-
-```bash
-bash smoke_test_all_cd.sh
-```
-
-To skip rebuilding (if images are already built):
-
-```bash
-bash smoke_test_all_cd.sh --skip-build
-```
-
-To test a single fuzzer:
-
-```bash
-bash smoke_test_all_cd.sh --only aflcd
-```
-
-Expected output per fuzzer:
-
-```
-[PASS] aflcd: 3 resets fired, container exited 0
-```
-
----
-
-## Running a Local Evaluation
+## Running an Evaluation
 
 `run_local.sh` provides a single-command interface for running campaigns on one machine.
 
@@ -140,7 +107,9 @@ Options:
   --seed     N             Base FUZZER_SEED; rep i uses seed+i (default: 1000)
 ```
 
-### Example: single pair, short run
+### Quick trial (~1 hour)
+
+Run AFL vs AFLCD on sqlite3 for one hour with two repetitions:
 
 ```bash
 bash run_local.sh \
@@ -148,10 +117,10 @@ bash run_local.sh \
   --targets "sqlite3" \
   --timeout 1h \
   --reps 2 \
-  --outdir ./results/afl_sqlite3_quick
+  --outdir ./results/trial
 ```
 
-### Example: reproducing the AFL/AFLCD paper pair
+### Reproducing a paper fuzzer pair (24 hours, all targets, 10 reps)
 
 ```bash
 bash run_local.sh \
@@ -162,118 +131,34 @@ bash run_local.sh \
   --outdir ./results/afl_pair
 ```
 
-> **Note:** 10 reps x 21 programs x 2 fuzzers = 420 campaigns. On a single machine this
-> requires many cores and will take proportionally longer than 24 h if run sequentially.
-> Use the distributed scripts below for parallel execution across multiple machines.
+> **Resource note:** 10 reps x 21 programs x 2 fuzzers = 420 campaigns. Each campaign
+> uses one CPU core for 24 hours. On a single machine, campaigns run in parallel up to
+> `--workers` (default: all cores), so wall-clock time depends on available hardware.
 
-### Analyzing results
-
-```bash
-CDFUZZ_BASE=./results/afl_sqlite3_quick \
-CDFUZZ_OUTDIR=./results/afl_sqlite3_quick/plots \
-  python3 plot_seed4.py
-```
-
----
-
-## Running the Distributed Evaluation
-
-For the full 10-repetition evaluation, the `cloudlab/` scripts implement a head-and-workers architecture. Each worker runs one fuzzer over all Magma targets for one repetition; the head dispatches and collects results via a shared filesystem.
-
-### Architecture
-
-```
-head node (orchestrate.sh)
-  |-- SSH --> worker (fuzzer=afl,      rep=0, worker-run.sh)
-  |-- SSH --> worker (fuzzer=aflcd,    rep=0, worker-run.sh)
-  |-- SSH --> worker (fuzzer=afl,      rep=1, worker-run.sh)
-  ...
-  `-- SSH --> worker (fuzzer=honggfuzz, rep=9, worker-run.sh)
-
-Results written to shared storage:
-  $SHARED/distributed/<run-id>/ar/<fuzzer>/<target>/<program>/<rep>/
-```
-
-### Step 1: Prepare a manifest
-
-Create `$SHARED/cluster/manifest.txt`:
-
-```
-# name          ip              fuzzer       rep
-head             192.168.1.1     -            -
-afl-0            192.168.1.10    afl          0
-aflcd-0          192.168.1.11    aflcd         0
-afl-1            192.168.1.12    afl          1
-aflcd-1          192.168.1.13    aflcd         1
-```
-
-One row per worker. The `name` field is used for status files; `ip` must be SSH-reachable from the head. Each worker runs exactly one fuzzer for one repetition index.
-
-### Step 2: Set up nodes
-
-Run on each node as root (idempotent):
+### Running all six pairs
 
 ```bash
-# On the head node:
-sudo bash cloudlab/setup-node.sh head \
-  --fuzzers "afl,aflcd,aflfast,aflfastcd,moptafl,moptaflcd,aflplusplus,aflpluspluscd,fairfuzz,fairfuzzcd,honggfuzz,honggfuzzcd" \
-  --nodes-per-fuzzer 10 \
-  --repo /path/to/cdfuzzing \
-  --shared /path/to/shared/nfs
-
-# On each worker node:
-sudo bash cloudlab/setup-node.sh worker \
-  --fuzzer <FUZZER_NAME> \
-  --rep <REP_INDEX> \
-  --repo /path/to/cdfuzzing \
-  --shared /path/to/shared/nfs
-```
-
-`setup-node.sh` installs Docker, moves Docker's data-root to a large local disk (`/mydata` by default, overridable with `--local-disk`), and configures passwordless inter-node SSH.
-
-### Step 3: Launch a run
-
-```bash
-cd cloudlab
-./orchestrate.sh \
-  --run-id run1 \
+bash run_local.sh \
+  --fuzzers "afl aflcd aflfast aflfastcd moptafl moptaflcd aflplusplus aflpluspluscd fairfuzz fairfuzzcd honggfuzz honggfuzzcd" \
+  --targets "sqlite3 libpng lua libsndfile libtiff libxml2 poppler php openssl" \
   --timeout 24h \
-  --fuzzers "afl aflcd" \
-  --shared /path/to/shared/nfs \
-  --repo /path/to/cdfuzzing
-```
-
-`orchestrate.sh` polls all workers every 60 seconds and calls `merge-results.sh` automatically when all workers finish.
-
-### Step 4: Check progress
-
-```bash
-ls /path/to/shared/nfs/distributed/run1/status/
-# afl-0.done  aflcd-0.done  afl-1.running ...
-```
-
-### Step 5: Merge and analyze
-
-```bash
-./cloudlab/merge-results.sh \
-  --run-id run1 \
-  --shared /path/to/shared/nfs \
-  --repo /path/to/cdfuzzing
+  --reps 10 \
+  --outdir ./results/full_eval
 ```
 
 ---
 
 ## Analyzing Results
 
-`plot_seed4.py` reads the captain archive layout and produces the summary tables from the paper.
+`plot_seed4.py` reads the campaign output and produces the tables and plots from the paper.
 
 ```bash
-CDFUZZ_BASE=/path/to/shared/distributed/run1 \
-CDFUZZ_OUTDIR=/tmp/run1_plots \
+CDFUZZ_BASE=./results/trial \
+CDFUZZ_OUTDIR=./results/trial/plots \
   python3 plot_seed4.py
 ```
 
-Output in `$CDFUZZ_OUTDIR`:
+Output files in `$CDFUZZ_OUTDIR`:
 
 | File | Contents |
 |---|---|
@@ -310,6 +195,8 @@ CD parameters are passed as environment variables. Baseline fuzzers ignore them 
 | AFL++ / AFL++CD | 100 | 12 | 25 | Higher C prevents cmplog annotation churn |
 | FairFuzz / FairFuzzCD | 100 | 3 | 10 | Soft reset |
 | honggfuzz / honggfuzzCD | 5 | 2 | 5 | KEEP_RECENT=50 |
+
+`run_local.sh` applies these parameters automatically for each named fuzzer.
 
 ---
 
