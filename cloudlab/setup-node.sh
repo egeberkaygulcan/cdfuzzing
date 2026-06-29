@@ -147,6 +147,23 @@ fi
 SSHEOF
 log "SSH cluster key installed from $CLUSTER_SSH"
 
+# --- 3b. Persist cluster key in sshd drop-in (immune to Emulab keymgmt wipe) --
+# Emulab's keymgmt periodically replaces ~/.ssh/authorized_keys with only the
+# user's registered Emulab keys, wiping our cluster key. Fix: also install the
+# cluster pubkey into a LOCAL file (/etc/ssh/cdfuzz_authorized_keys) that
+# keymgmt cannot touch, and configure sshd to accept it via a drop-in.
+# This must run as root (setup-node.sh runs as root via CloudLab Execute service).
+PUBKEY="$(cat "$CLUSTER_SSH/id_rsa.pub")"
+echo "$PUBKEY" > /etc/ssh/cdfuzz_authorized_keys
+chmod 644 /etc/ssh/cdfuzz_authorized_keys
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/90-cdfuzz.conf <<'SSHDCFG'
+AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/cdfuzz_authorized_keys
+SSHDCFG
+chmod 644 /etc/ssh/sshd_config.d/90-cdfuzz.conf
+systemctl reload sshd 2>/dev/null || service sshd reload 2>/dev/null || true
+log "sshd drop-in installed: /etc/ssh/cdfuzz_authorized_keys (keymgmt-immune)"
+
 # --- 4. Record this node's role -------------------------------------------
 mkdir -p /local
 {

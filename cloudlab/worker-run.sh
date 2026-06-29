@@ -139,6 +139,47 @@ case "$FUZZER" in
         # AFL_DRIFT_KEEP_RECENT=50: soft corpus reset (keep 50 most-recent entries).
         CD_WINDOW=5; CD_CONSECUTIVE=2; CD_COOLDOWN=5; CD_KEEP_RECENT=50
         ;;
+    # --- AFL-CD parameter variants (dist15) ------------------------------------
+    # Root-cause: AFL-CD thrashes in first 200 min then settles (6 resets/rep).
+    # Hypothesis: longer cooldown prevents rapid cascade; higher C delays first fire.
+    aflcd_v2)
+        # C=3 CL=60: same sensitivity, 6× longer cooldown.
+        # Tests whether 60-min recovery gap prevents corpus depletion cascade.
+        CD_SOFT_RESET=1; CD_CONSECUTIVE=3; CD_HAVOC_BOOST=1; CD_COOLDOWN=60
+        ;;
+    aflcd_v3)
+        # C=5 CL=120: higher threshold + very long cooldown.
+        # Tests whether delayed first fire + large recovery gap reduces total resets.
+        CD_SOFT_RESET=1; CD_CONSECUTIVE=5; CD_HAVOC_BOOST=1; CD_COOLDOWN=120
+        ;;
+    aflfastcd_v2)
+        # C=2 CL=25: more responsive AFLFast.
+        # Tests whether catching 2-window stagnation fires on sqlite3-type programs
+        # in more reps (currently 1/10 reps fire; expect 4-6/10 with C=2).
+        CD_SOFT_RESET=1; CD_CONSECUTIVE=2; CD_HAVOC_BOOST=1; CD_COOLDOWN=25
+        ;;
+    aflfastcd_v3)
+        # C=2 CL=10: same C as v2 but shorter cooldown.
+        # Root cause: AFLFast transient bursts reset counter before C=3 fires;
+        # CL=25 in v2 suppressed re-triggering (0 sqlite3 resets in 5 reps).
+        # Hypothesis: C=2 + CL=10 fires earlier AND allows multiple resets per
+        # campaign, improving chance of catching sqlite3-type stagnation.
+        CD_SOFT_RESET=1; CD_CONSECUTIVE=2; CD_HAVOC_BOOST=1; CD_COOLDOWN=10
+        ;;
+esac
+
+# --- Create magma fuzzer symlinks for variant experiments ------------------
+# Variants share the same binary as their base fuzzer but use different CD params.
+# Captain requires a real (or symlinked) directory at $MAGMA/fuzzers/$FUZZER.
+case "$FUZZER" in
+    aflcd_v2|aflcd_v3)
+        [ -e "$MAGMA/fuzzers/$FUZZER" ] || \
+            ln -sf "$MAGMA/fuzzers/aflcd" "$MAGMA/fuzzers/$FUZZER"
+        ;;
+    aflfastcd_v2|aflfastcd_v3)
+        [ -e "$MAGMA/fuzzers/$FUZZER" ] || \
+            ln -sf "$MAGMA/fuzzers/aflfastcd" "$MAGMA/fuzzers/$FUZZER"
+        ;;
 esac
 log "seed=$FUZZER_SEED CD params: W=$CD_WINDOW C=$CD_CONSECUTIVE SR=$CD_SOFT_RESET BOOST=$CD_HAVOC_BOOST CL=$CD_COOLDOWN SF=$CD_STAGNATION"
 

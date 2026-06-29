@@ -1,5 +1,80 @@
 # Decisions
 
+## 2026-06-29: aflfastcd_v3 design — C=2, CL=10 (dist16)
+
+**Context**: aflfastcd (C=3, CL=10) fires in only 1/10 reps on sqlite3 (Δbugs=0).
+aflfastcd_v2 (C=2, CL=25) from dist15 had 0 sqlite3 resets across 5 reps and Δbugs=0.
+
+**Root cause of v2 failure**: CL=25 suppressed re-triggering. Despite lowering C from 3→2,
+the 25-minute cooldown prevented the detector from re-engaging after the initial burst pattern
+cleared. The baseline aflfastcd (C=3, CL=10) fired sqlite3 once in 10 reps because the
+shorter cooldown allowed more retry opportunities.
+
+**aflfastcd_v3 design**: C=2, CL=10 — lower sensitivity threshold than default PLUS standard
+cooldown. This gives both:
+- Earlier trigger: C=2 fires before AFLFast's exponential burst can reset consecutive counter twice
+- More retries: CL=10 allows the detector to re-engage after the initial burst passes
+
+All other parameters unchanged: SR=1, W=100, threshold=0.05, HAVOC_BOOST=1.
+
+**Expected result**: sqlite3 fires in 2–4/3 reps (might be higher than default's 1/10 rate);
+coverage and bug gains if stagnation on sqlite3 and similar programs is caught earlier.
+
+**Implemented**: `worker-run.sh` case `aflfastcd_v3`, symlinked to `aflfastcd/`.
+**Experiment**: dist16 on Utah cluster (eldarfin-309225), 3 reps × aflfast vs aflfastcd_v3.
+
+---
+
+## 2026-06-29: Δbugs metric established — per-program union over all reps, summed
+
+**Decision**: The standard Δbugs metric for the paper is:
+
+$$\Delta\text{bugs} = \sum_{p \in \mathcal{P}} \left( \left|\bigcup_{r \in R} B(\text{cd}, p, r)\right| - \left|\bigcup_{r \in R} B(\text{base}, p, r)\right| \right)$$
+
+That is: for each program, take the union of bug IDs found across all 10 reps for both CD and
+base, compute the per-program difference, then sum those per-program differences.
+
+**Key property**: this is NOT a global set union — bugs shared across programs (e.g., PDF016 in
+pdf_fuzzer/pdfimages/pdftoppm) are counted once per program that finds them. This is how
+`generate_summary_table()` in `plot_seed4.py` works, and how evaluation.tex was computed.
+
+**Verification (2026-06-29)**: Direct Python computation on 10-rep merged data gives:
+
+| Pair | Δbugs | Δbugs (fired-only) |
+|---|---|---|
+| aflplusplus → aflpluspluscd | +1 | 0 |
+| fairfuzz → fairfuzzcd | +6 | +2 |
+| moptafl → moptaflcd | +8 | +6 |
+| afl → aflcd | −3 | +1 |
+| aflfast → aflfastcd | 0 | 0 |
+| honggfuzz → honggfuzzcd | +1 | 0 |
+
+These **match the evaluation.tex table exactly**. The table Δbugs column is correct for 10 reps.
+
+**Fired-only note**: "fired-only" restricts the union to reps where that program had ≥1 reset.
+AFL's −3 (all-programs) flips to +1 (fired-only), confirming the deficit is pure variance in
+programs CD never touched. FairFuzz's +6 drops to +2 (fired-only), exposing libsndfile (+4) and
+sqlite3 (+1) as zero-reset variance. Both numbers are defensible in the paper; the distinction
+belongs in the RQ3 text.
+
+---
+
+## 2026-06-27: AFL-CD and AFLFast-CD root cause analysis
+
+**AFL-CD (Δbugs = −3, all-progs; +1, fired-only):**
+Cascade reset pattern: 6 resets fire in first 3.3h of libpng campaign (minutes 28, 81, 127,
+155, 176, 198), then NO resets for remaining 86% of the 24h campaign. Each reset depletes corpus
+slightly (post-reset exploration window shrinks: 200→53→46→28→21→22 min). CL=10 allows resets
+every 12 min minimum; the short cooldown enables the cascade.
+Fix: `aflcd_v2` (CL=60, ≥72 min between resets), `aflcd_v3` (C=5, CL=120) — both in dist15.
+
+**AFLFast-CD (Δbugs = 0, fired-only; sqlite3 +1 came from 1/10 reps):**
+AFLFast's exponential power schedule causes transient coverage bursts that reset the consecutive
+counter before C=3 is reached. Only rep7 on sqlite3 fired, giving +1 bug and +29% coverage.
+Fix: `aflfastcd_v2` (C=2) — should fire on sqlite3 in ~5/10 reps. In dist15.
+
+---
+
 ## 2026-06-22: dist9 outcomes — AFL++ C=12 confirmed; honggfuzz CD negative result accepted
 
 ### aflpluspluscd: C=12, CL=25 is the paper-ready config

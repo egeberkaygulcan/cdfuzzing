@@ -2,11 +2,106 @@
 
 ---
 
-## distributed (CloudLab): dist14 — honggfuzz + honggfuzzcd, 10 reps × 24h, soft reset (PLANNED)
+## distributed (CloudLab): dist16 — aflfastcd_v3 vs aflfast, 3+ reps × 24h (PLANNED)
+
+Goal: Improve AFLFast with CD by tuning the trigger parameters. aflfastcd (C=3, CL=10) fires
+only in 1/10 reps on sqlite3 — the transient coverage bursts from AFLFast's exponential power
+schedule reset the consecutive counter before C=3 is reached. aflfastcd_v2 (C=2, CL=25) from
+dist15 had 0 sqlite3 resets in 5 reps (CL=25 suppresses re-triggering too aggressively).
+
+**aflfastcd_v3 hypothesis**: C=2 fires sooner than C=3 before the burst pattern can reset the
+counter; CL=10 (not 25) allows multiple resets per campaign, giving more chances to hit
+sqlite3-type stagnation.
+
+Status: **PLANNED** — Utah cluster (eldarfin-309225) provisioned, 36 workers + head idle.
+SSH access broken (Emulab keymgmt wiped cluster key). See Pre-launch checklist below.
+
+Design:
+- Fuzzers: **aflfast** (baseline) + **aflfastcd_v3** (variant)
+- Reps: 3 (repurpose the 3 aflfastcd workers .40–.42 for v3, 3 aflfast workers .22–.24 for baseline)
+- Targets: all 9 Magma targets (21 programs)
+- Timeout: 24h
+- Workers: 6 (existing idle nodes on eldarfin-309225)
+
+aflfastcd_v3 parameters:
+| Param | Value | Change from default | Rationale |
+|---|---|---|---|
+| AFL_DRIFT_CONSECUTIVE | 2 | ↓ from 3 | fire before burst pattern resets counter |
+| AFL_DRIFT_COOLDOWN | 10 | ↓ from 25 (v2) | shorter cooldown → more retry opportunities |
+| AFL_DRIFT_SOFT_RESET | 1 | same as base | soft reset, clear passed_det for re-exploration |
+| AFL_DRIFT_WINDOW | 100 | unchanged | |
+| AFL_DRIFT_THRESHOLD | 0.05 | unchanged | |
+
+**Pre-launch checklist (run on Utah head amd131.utah.cloudlab.us):**
+
+1. **Free NFS space** — dist13/dist15 are safe to delete (data on Wisconsin):
+```bash
+# Both dist13 and dist15 are on Wisconsin; seed tarballs are from April 2026
+rm -rf /proj/cdfuzzing-PG0/distributed/dist13 /proj/cdfuzzing-PG0/distributed/dist15
+rm -f /proj/cdfuzzing-PG0/seed1_full.tar.gz /proj/cdfuzzing-PG0/seed1_full_backup.tar.gz
+rm -f /proj/cdfuzzing-PG0/seed2_full.tar.gz
+# Expect ~42G freed; NFS should drop from 100% to ~38% full
+df -h /proj/cdfuzzing-PG0
+```
+
+2. **Restore worker SSH** — run fix-ssh-workers.sh to install the sshd drop-in:
+```bash
+cd /local/repository
+git pull --ff-only   # pick up updated setup-node.sh and fix-ssh-workers.sh
+bash cloudlab/fix-ssh-workers.sh --shared /proj/cdfuzzing-PG0
+# Expected: "Verified: 36/36 workers reachable"
+```
+
+3. **Write dist16 manifest** — aflfastcd_v3 workers are .40/.41/.42, aflfast workers are .22/.23/.24:
+```bash
+mkdir -p /proj/cdfuzzing-PG0/cluster
+cat > /proj/cdfuzzing-PG0/cluster/manifest.txt << 'EOF'
+# name ip fuzzer rep   (dist16 - aflfastcd_v3 vs aflfast, 3 reps)
+head 192.168.1.1 - -
+aflfast-0 192.168.1.22 aflfast 0
+aflfast-1 192.168.1.23 aflfast 1
+aflfast-2 192.168.1.24 aflfast 2
+aflfastcd_v3-0 192.168.1.40 aflfastcd_v3 0
+aflfastcd_v3-1 192.168.1.41 aflfastcd_v3 1
+aflfastcd_v3-2 192.168.1.42 aflfastcd_v3 2
+EOF
+```
+
+4. **Launch**:
+```bash
+cd /local/repository/cloudlab
+bash orchestrate.sh --run-id dist16 --timeout 24h \
+    --fuzzers "aflfast aflfastcd_v3" \
+    --shared /proj/cdfuzzing-PG0 \
+    --poll 60
+```
+
+5. **After completion** — pull results to Wisconsin (Utah NFS may fill again):
+```bash
+# On Utah head, for each worker:
+for rep in 0 1 2; do
+    for fuzzer in aflfast aflfastcd_v3; do
+        rsync -r --mkpath 192.168.1.X:/mydata/dist16/ar/$fuzzer/ \
+            head:/mydata/dist16/ar/$fuzzer/
+    done
+done
+# Then from Wisconsin head:
+rsync -r amd131.utah.cloudlab.us:/mydata/dist16/ar/ /mydata/dist16/ar/
+```
+
+Results (after pull): `/mydata/dist16/ar/`
+Analysis: run `analyze_dist15.py` with DIST15_AR pointing to dist16 data.
+
+---
+
+## distributed (CloudLab): dist14 — honggfuzz + honggfuzzcd, 10 reps × 24h, soft reset (RUNNING/LIKELY COMPLETE)
 
 Goal: Validate new **AFL_DRIFT_KEEP_RECENT** soft reset for honggfuzzcd across 10 paired reps.
 dist11/12/13 used hard reset (KEEP_RECENT=0); this run tests KEEP_RECENT=50 to check whether
 retaining recent corpus discoveries eliminates the coverage cliff seen in dist3–dist9.
+
+Status: **RUNNING** — launched ~June 27 17:00 MDT, expected done ~June 27 18:30 MDT. Likely
+complete by June 29. Check: `ls /proj/CDFuzzing/distributed/dist14/status/*.done | wc -l` (expect 20).
 
 Design:
 - Fuzzers: honggfuzz (baseline) + honggfuzzcd (with soft reset)
@@ -51,28 +146,33 @@ Status: **PLANNED**
 
 ---
 
-## distributed (CloudLab): dist11+dist12 merged — 8 reps × 24h × 12 fuzzers (CURRENT)
+## distributed (CloudLab): dist11+dist12+dist13 merged — 10 reps × 24h × 12 fuzzers (CURRENT)
 
-8-rep merged evaluation (reps 0–7) combining dist11 and dist12.
-⚠ **Paper table (`content/evaluation.tex`) still shows old single-rep values — needs update after dist13 (10-rep data).**
+10-rep merged evaluation (reps 0–9) combining dist11, dist12, and dist13.
+dist13 (reps 8–9) rsynced to Wisconsin `/mydata/dist13/ar/` and symlinked into `merged/ar/` on June 27 ~14:48.
 
-### 8-Rep Summary (2026-06-26, corrected)
+### 10-Rep Summary (2026-06-29, confirmed correct)
 
-Δbugs columns: **avg** = mean bugs-found delta across all 8 reps; **uni** = union-bugs delta
-(CD union − baseline union). Resets = per-rep average across 8 reps.
-Old single-rep Δbugs were wrong (always rep 0 artifact); these are the correct multi-rep values.
+**Δbugs** = sum of per-program (|cd_union| − |base_union|) over all 10 reps. This is the metric
+in evaluation.tex and was verified correct on June 29 by direct computation.
+**Δbugs (fired only)** restricts the union to reps where the program had ≥1 reset.
 
-| Pair | Δcov | Δbugs avg | Δbugs uni | Resets/rep |
-|---|---|---|---|---|
-| afl → aflcd | **+0.5%** | -0.9 | -2 | 20 |
-| aflfast → aflfastcd | **+1.8%** | +0.7 | +2 | 8 |
-| moptafl → moptaflcd | **+3.9%** | +3.4 | +6 | 82 |
-| aflplusplus → aflpluspluscd | -2.2% | -2.6 | +1 | 12 |
-| fairfuzz → fairfuzzcd | -1.8% | -0.1 | +6 | 9 |
-| honggfuzz → honggfuzzcd | -- | -2.4 | +4 | 5 |
+| Pair | Δcov | Δbugs (all progs) | Δbugs (fired only) | Programs fired | Resets total |
+|---|---|---|---|---|---|
+| afl → aflcd | **+1.0%** | **−3** | **+1** | 7/21 | 19 |
+| aflfast → aflfastcd | **+1.6%** | **0** | **0** | 9/21 | 8 |
+| moptafl → moptaflcd | **+4.1%** | **+8** | **+6** | 20/21 | 78 |
+| aflplusplus → aflpluspluscd | −1.8% | **+1** | **0** | 16/21 | 15 |
+| fairfuzz → fairfuzzcd | **+2.4%** | **+6** | **+2** | 8/21 | 10 |
+| honggfuzz → honggfuzzcd | — | **+1** | **0** | 18/21 | 14 |
 
-Data: `/proj/CDFuzzing/distributed/merged/ar/` (1,995 symlinks → dist11 + dist12)
-Summary: `/proj/CDFuzzing/distributed/merged/plots/summary_table.txt`
+Key notes:
+- AFL −3 (all progs): comes entirely from zero-reset programs (tiffcp −1, xml_read −1, pdfimages −1). Fired-only = +1. Not a CD-caused regression.
+- FairFuzz +6 (all progs): dominated by libsndfile +4 and sqlite3 +1, both with 0 resets. Fired-only = +2 (tiffcp only).
+- MOpt: near-universal intervention (20/21); sqlite3 +4 bugs, +16.5pp absolute coverage. Strongest result.
+- Guard stats (unchanged vs 8-rep): 3,222 detected / 144 fired / **95.5% suppression**.
+
+Data: `/proj/CDFuzzing/distributed/merged/ar/`
 
 ---
 
