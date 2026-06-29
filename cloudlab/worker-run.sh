@@ -2,26 +2,16 @@
 ##
 # Runs on a WORKER node (invoked over SSH by orchestrate.sh, or by hand).
 #
-# It fuzzes ONE fuzzer over the requested Magma targets on the local /mydata
-# disk via the existing captain runner, then copies the lightweight results
-# (everything except the multi-GB queue/ corpora) into the shared merge
-# directory under the repetition id taken from this node's --rep.
+# Fuzzes ONE fuzzer over the requested Magma targets on the local /mydata disk
+# via the captain runner, then copies the lightweight results (everything except
+# the multi-GB queue/ corpora) into the shared results directory.
 #
 # Usage:
-#   worker-run.sh --fuzzer F --rep N --run-id ID --timeout 8h \
+#   worker-run.sh --fuzzer F --rep N --run-id ID --timeout 24h \
 #                 [--targets "sqlite3 libpng ..."] [--repo PATH] [--shared PATH]
 #
-# Parameter design (dist2 — winning params from dist1 A/B, both reps identical):
-#   Both reps of each CD fuzzer now use the same winning parameter set so that
-#   the two reps are genuine statistical repetitions for CD-vs-baseline analysis.
-#
-#   Fuzzer          C   SF    dist1 basis
-#   aflcd           3  0.5   rep1 won (+10268 cov, 15 vs 6 resets)
-#   aflpluspluscd   8  0.5   rep1 won (+3388 cov, 19 vs 18 resets)
-#   fairfuzzcd      3  0.5   rep0 won (+4941 cov); blacklist bug fixed in dist2
-#   moptaflcd       5  0.3   rep1 won (+3113 cov, 31 vs 25 resets)
-#   aflfastcd       3  0.5   rep1 won (+1995 cov, 3 vs 3 resets)
-#   honggfuzzcd     5  0.5   both had 0 CD activity (init bug); default kept
+# CD parameters are set per-fuzzer from the paper-confirmed best values below.
+# Override any AFL_DRIFT_* variable in the environment before calling this script.
 ##
 set -uo pipefail
 
@@ -75,35 +65,13 @@ FUZZER_SEED=$(( 1000 + REP ))
 
 # --- CD parameter tables -------------------------------------------------------
 #
-# Two modes:
-#
-# SWEEP mode (dist10 — honggfuzzcd only):
-#   honggfuzzcd reps 0–5 sweep C=2–10 with different CL values to find the best
-#   consecutive-gate config now that the C/CL code bug is fixed.
-#
-# FULL-RUN mode (all other CD fuzzers):
-#   All reps use the confirmed best parameters from dist2–dist9.  All reps are
-#   identical so each rep is a genuine statistical repetition.
-#
-# Confirmed best params by fuzzer (all use SR=1, W=100, threshold=0.05):
-#   aflcd          C=3  CL=10  (dist2 +3 bugs; dist5 +4 bugs)
-#   aflpluspluscd  C=12 CL=25  (dist7–dist9: +11/+8/+6 bugs; confirmed SR=1 essential)
-#   fairfuzzcd     C=3  CL=10  (dist2 corrected; dist6 +1 bug)
-#   moptaflcd      C=5  CL=10  (dist2 +6 bugs; dist5 +1 bug)
-#   aflfastcd      C=3  CL=10  (dist2 +5 bugs; dist5 +5 bugs)
-#   honggfuzzcd    W=5  C=2  CL=5  SR=2  (dist9 rep0 only confirmed test; dist10 sweep pending)
-#
-# honggfuzzcd sweep (dist10): 8h, DRIFT_SAMPLE_SEC=60 so C=N = N consecutive
-# stagnation minutes.  Reps 0–5 explore the C/CL space:
-#
-#  rep | W | C  | CL | profile
-#  ----+---+----+----+---------
-#   0  | 5 |  2 |  5 | aggressive
-#   1  | 5 |  3 | 10 | moderate
-#   2  | 5 |  5 | 15 | conservative
-#   3  | 5 |  8 | 25 | very conservative
-#   4  | 5 | 10 | 25 | near-zero calibration
-#   5  | 5 |  3 |  3 | moderate C + short CL
+# Paper-confirmed best CD parameters per fuzzer (W=100, threshold=0.05 unless noted):
+#   aflcd          C=3  CL=10  SR=1
+#   aflpluspluscd  C=12 CL=25  SR=1  (high C avoids cmplog annotation churn)
+#   fairfuzzcd     C=3  CL=10  SR=1
+#   moptaflcd      C=5  CL=10  SR=1
+#   aflfastcd      C=3  CL=10  SR=1
+#   honggfuzzcd    W=5  C=2  CL=5   KEEP_RECENT=50
 
 # Defaults (safe fallback for any unrecognised fuzzer / baseline).
 CD_CONSECUTIVE=5
@@ -129,14 +97,12 @@ case "$FUZZER" in
         CD_SOFT_RESET=1; CD_CONSECUTIVE=3; CD_HAVOC_BOOST=1; CD_COOLDOWN=10
         ;;
     aflpluspluscd)
-        # Confirmed best across dist7–dist9.  All reps use the same config.
+        # Higher C=12 prevents premature resets due to cmplog/laf-intel annotation churn.
         CD_SOFT_RESET=1; CD_CONSECUTIVE=12; CD_HAVOC_BOOST=1; CD_COOLDOWN=25
         ;;
-    # --- honggfuzzcd: sweep mode for dist10 ------------------------------------
     honggfuzzcd)
-        # dist14 confirmed best: W=5 C=2 CL=5 (dist9 rep0: +1 bug, 10 resets).
-        # All reps identical — genuine statistical repetitions.
-        # AFL_DRIFT_KEEP_RECENT=50: soft corpus reset (keep 50 most-recent entries).
+        # W=5 uses seconds-scale windows (DRIFT_SAMPLE_SEC=1 in honggfuzz).
+        # KEEP_RECENT=50 keeps the 50 most-recent corpus entries on reset (soft prune).
         CD_WINDOW=5; CD_CONSECUTIVE=2; CD_COOLDOWN=5; CD_KEEP_RECENT=50
         ;;
 esac
