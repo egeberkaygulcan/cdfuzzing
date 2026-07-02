@@ -1,47 +1,44 @@
 # TODO
 
-## Active — dist11 / dist12 / paper
+## Active
 
-- [ ] **Wait for dist11 to complete** — 45/60 workers still running (wave 2/3 due to 8 CPUs/node).
-  Expected: **June 26 ~12:00 CEST** (Thursday noon Amsterdam).
-  Monitor from `eldarfin-309063` head:
+- [ ] **dist14: still running** — expected done ~June 29 18:00–18:30 CDT. Last batch containers started June 28 ~17:46; 24h timeout fires ~17:46 CDT today. Then analyze: honggfuzz KEEP_RECENT=50 vs 0 on Δbugs and Δcov.
   ```bash
-  echo "done: $(ls /proj/CDFuzzing/distributed/dist11/status/*.done 2>/dev/null | wc -l) / 60"
-  tail -5 /proj/CDFuzzing/dist11_orch.log
+  done=$(ls /proj/CDFuzzing/distributed/dist14/status/*.done 2>/dev/null | wc -l)
+  echo "dist14: $done/20 done"
   ```
 
-- [ ] **Launch dist12** (reps 5–9) on NEW CloudLab experiment.
-  - Create experiment with `nodesPerFuzzer=5`, **`repOffset=5`**, `sharedDir=/proj/CDFuzzing`
-  - Wait for boot, then from new head:
-    ```bash
-    cd /local/repository/cloudlab
-    tmux new-session -d -s dist12 \
-      "bash orchestrate.sh --run-id dist12 --timeout 24h --poll 60 \
-         2>&1 | tee /proj/CDFuzzing/dist12_orch.log"
-    ```
-  - Expected completion: **June 28 ~12:00 CEST** (Saturday noon Amsterdam)
+- [ ] **Analyze dist14** — after all 20 workers done, run plot_seed4.py (or targeted script) comparing honggfuzz KEEP_RECENT=50 vs KEEP_RECENT=0.
 
-- [ ] **Merge dist11 + dist12** after both complete:
-  ```bash
-  mkdir -p /proj/CDFuzzing/distributed/dist11_merged/ar
-  rsync -a /proj/CDFuzzing/distributed/dist11/ar/ /proj/CDFuzzing/distributed/dist11_merged/ar/
-  rsync -a /proj/CDFuzzing/distributed/dist12/ar/ /proj/CDFuzzing/distributed/dist11_merged/ar/
-  ```
+## Done (2026-06-29)
 
-- [ ] **Run analysis on merged results**:
-  ```bash
-  CDFUZZ_BASE=/proj/CDFuzzing/distributed/dist11_merged \
-  CDFUZZ_OUTDIR=/proj/CDFuzzing/distributed/dist11_merged/plots \
-  python3 /local/repository/plot_seed4.py
-  ```
+- [x] **dist14/dist15 status checked** — dist14: 9/20 done, 11 running (still in progress; expected done ~18:00-18:30 CDT). dist15: fuzzing complete, Utah NFS quota exhausted (100% full); worker data pulled to Wisconsin `/mydata/dist15/ar/` (monitor/ dirs later deleted for inode exhaustion).
+- [x] **dist15 analyzed** — `analyze_dist15.py` run; results in HANDOFF.md. CL=60 prevents cascade (aflcd_v2 −47% resets). aflfastcd_v2 C=2 hypothesis failed (sqlite3 0/5 reps). aflfastcd_v2 limited to 5/10 reps (workers .35-.39 inaccessible from Utah head).
+- [x] **Δbugs methodology established** — correct metric: per-program union over all 10 reps, summed. Confirmed evaluation.tex table Δbugs column is already correct for 10-rep data.
+- [x] **dfcov/dfbug/dfbugdelta analysis** — full 6-pair dataframe analysis (fired-reps-only): coverage delta per program, bug ID union per program, bug delta per fuzzer pair. Results: moptafl best (+6 fired-only, +8 all-reps); others near 0 when restricted to fired reps.
+- [x] **All-6-pairs fired-only analysis** — confirmed drift_log paths for all fuzzer families (AFL: `findings/drift_log.csv`; AFL++/honggfuzz: `findings/default/drift_log.csv`). Per-rep reset counts verified.
 
-- [ ] **Update paper draft** with final configs: AFL++CD SR=1,C=12,CL=25 → +6 bugs on Magma;
-  honggfuzz CD negative result section
+## Done (2026-06-27)
 
-## Medium Priority
+- [x] **dist13 COMPLETE + MERGED** — 25/25 Utah workers done; data at `/mydata/dist13/ar/` on Wisconsin (local disk); symlinked into `merged/ar/` as reps 8–9 on June 27 ~14:48.
+- [x] **10-rep analysis confirmed** — evaluation.tex table numbers correct at 10 reps; guard stats unchanged (3,222 detected / 144 fired / 95.5% suppression).
+- [x] **Root cause analysis complete** — AFL-CD cascade reset pattern (CL=10 causes 6 resets in first 3.3h, then vanilla AFL for 86% of campaign); AFLFast-CD C=3 too conservative for sqlite3 (only 1/8 reps fires).
+- [x] **dist14 launched** — 20 workers, honggfuzz KEEP_RECENT=50, Wisconsin, expected ~June 27 18:30 MDT.
+- [x] **dist15 launched** — 30 workers, aflcd_v2/v3 + aflfastcd_v2, Utah, expected ~June 28 18:00 MDT.
 
+## Done (2026-06-26)
 
-- [x] **dist6 prepared and queued**: honggfuzz UaF fix (zombie approach), 8×3 manifest,
+- [x] **dist11 COMPLETE** — 60/60 workers done, all reps 0–4, `/proj/CDFuzzing/distributed/dist11/ar/`
+- [x] **dist12 COMPLETE** — 36/36 workers done, reps 5–7 (Utah cluster2), ~07:35 CDT 2026-06-26
+- [x] **Transfer dist12 → Wisconsin** — rsync (ar/ without monitor/), thin monitor via Python
+- [x] **merged/ar/ symlink tree** — 1,995 symlinks, reps 0–7, `/proj/CDFuzzing/distributed/merged/ar/`
+- [x] **8-rep analysis** — plot_seed4.py on merged/, summary at `.../merged/plots/summary_table.txt`
+- [x] **Paper updated** — evaluation.tex table updated with 8-rep values, compiles clean (6 pages)
+- [x] **CLUSTER2.md created** — Utah cluster documentation (identity, access, dist12, dist13 plan)
+
+## Historical (prior sessions)
+
+: honggfuzz UaF fix (zombie approach), 8×3 manifest,
   rep2 SOFT_RESET=1 sweep — commit a0d951f8; auto-launches via `tmux:dist6_wait`
 - [x] **Analyze dist5 results**: honggfuzzcd Δ=+1 with 0 resets confirms UaF was causing the -11
 - [x] **Analyze dist6 results**: afl +2 ✅, fairfuzz +1 ✅, aflplusplus -3 ❌, honggfuzz INVALID ⚠
@@ -70,14 +67,8 @@
 - [x] **Launch dist11** (2026-06-23 04:37 CDT, `tmux:dist11`): full redo of dist10 with libtiff fix — 12 fuzzers × 5 reps × 24h, commit `0271863d`, all 60 workers confirmed.
   Expected done: 2026-06-24 ~04:38 CDT.
   Monitor: `tmux attach -t dist11` or `tail -f /proj/CDFuzzing/dist11_orch.log`
-- [ ] **Analyze dist11 results** when complete:
-  `CDFUZZ_BASE=/proj/CDFuzzing/distributed/dist11 CDFUZZ_OUTDIR=/proj/CDFuzzing/distributed/dist11/plots python3 /local/repository/plot_seed4.py`
-- [ ] **Fix dist7_followup.sh verdict logic** — should analyze per-rep, not aggregated total
-- [ ] **Update paper draft** with final configs: AFL++CD SR=1,C=12,CL=25 → +6 bugs on Magma; honggfuzz CD negative result section
-
-## Medium Priority
-
-## Medium Priority
+- [x] **Analyze dist11+dist12 results** — done via 8-rep merged analysis
+- [x] **Update paper draft** — 8-rep values in evaluation.tex; compiles clean
 
 ## Medium Priority
 
@@ -94,7 +85,7 @@
 
 ## Low Priority
 
-- [ ] Add confidence intervals / Mann-Whitney U test to summary table once multiple seeds available
+- [ ] Add confidence intervals / Mann-Whitney U test to summary table (10 reps will enable this)
 - [ ] Investigate poppler/pdftoppm AFL++CD anomaly: +12.7% coverage but -3 bugs (6→3)
 - [ ] Investigate lua/lua AFL++CD anomaly: -29.2% coverage and -1 bug (4 resets may over-reset)
 - [ ] Add libsndfile fairfuzz anomaly to DEBUGGING.md: +3 bugs with 0 resets and -43% coverage — possible canary detection timing difference

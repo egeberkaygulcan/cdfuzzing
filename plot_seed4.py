@@ -145,23 +145,33 @@ def parse_fuzzer_stats(fuzzer, target):
     return results
 
 
+def get_final_cov_from_log(fuzzer, target, program):
+    """Extract max edge count from honggfuzz log/current (Cur:.../EDGES/... lines)."""
+    max_edges = 0
+    for root_dir in [AR, CACHE]:
+        pattern = os.path.join(root_dir, fuzzer, target, program, "*", "log", "current")
+        for log_path in sorted(glob.glob(pattern)):
+            try:
+                with open(log_path) as f:
+                    for line in f:
+                        m = re.search(r'Cur:\d+/\d+/\d+/(\d+)/', line)
+                        if m:
+                            edges = int(m.group(1))
+                            if edges > max_edges:
+                                max_edges = edges
+            except Exception:
+                continue
+    return float(max_edges)
+
+
 def get_final_cov(fuzzer, target, program):
-    """Final corpus size: plot_data['paths'][-1] if available, else output/ file count."""
+    """Final edge coverage: map_size% from plot_data, or edge count from honggfuzz log."""
     pd_files = find_plot_data(fuzzer, target)
     if program in pd_files:
         data = parse_plot_data(pd_files[program])
-        if data is not None:
-            return int(data['paths'][-1])
-    # Fallback for honggfuzz-style fuzzers that write corpus to output/ not queue/
-    for root_dir in [AR, CACHE]:
-        for od in sorted(glob.glob(
-                os.path.join(root_dir, fuzzer, target, program, "*", "output"))):
-            if os.path.isdir(od):
-                n = sum(1 for f in os.listdir(od)
-                        if os.path.isfile(os.path.join(od, f)))
-                if n > 0:
-                    return n
-    return 0
+        if data is not None and len(data['map_size']) > 0:
+            return data['map_size'][-1]
+    return get_final_cov_from_log(fuzzer, target, program)
 
 
 def find_monitor_data(fuzzer, target, program):
@@ -195,6 +205,84 @@ def find_monitor_data(fuzzer, target, program):
                 bugs[bug_id] = {'reached': reached, 'triggered': triggered}
             return bugs, timestamps[0], timestamps[-1]
     return None, None, None
+
+
+def find_monitor_data_avg(fuzzer, target, program):
+    """Parse monitor canary files across ALL reps; return mean unique-bugs-triggered per rep.
+
+    Returns a dict {bug_id: fraction_of_reps_triggered} so that
+    sum(result.values()) == mean unique bugs per repetition.
+    Returns None if no data found.
+    """
+    per_rep = []
+    for root_dir in [AR, CACHE]:
+        for mon_dir in sorted(glob.glob(
+                os.path.join(root_dir, fuzzer, target, program, "*", "monitor"))):
+            if not os.path.isdir(mon_dir):
+                continue
+            timestamps = sorted([int(f) for f in os.listdir(mon_dir) if f.isdigit()])
+            if not timestamps:
+                continue
+            last_file = os.path.join(mon_dir, str(timestamps[-1]))
+            try:
+                with open(last_file) as f:
+                    header = f.readline().strip().split(',')
+                    values = f.readline().strip().split(',')
+            except OSError:
+                continue
+            bugs = {}
+            for i in range(0, len(header), 2):
+                bug_id = header[i].replace('_R', '')
+                try:
+                    triggered = int(values[i+1]) if i+1 < len(values) and values[i+1].strip() else 0
+                except (ValueError, IndexError):
+                    triggered = 0
+                bugs[bug_id] = triggered > 0
+            per_rep.append(bugs)
+        if per_rep:
+            break  # found data in AR, don't fall through to CACHE
+    if not per_rep:
+        return None
+    n = len(per_rep)
+    all_ids = set(k for d in per_rep for k in d)
+    return {k: sum(d.get(k, False) for d in per_rep) / n for k in all_ids}
+
+
+def find_monitor_data_union(fuzzer, target, program):
+    """Parse monitor canary files across ALL reps; return the union set of triggered bug IDs.
+
+    A bug is counted if it was triggered in ANY repetition.
+    Returns a set of bug_ids, or None if no data found.
+    """
+    union = set()
+    found_any = False
+    for root_dir in [AR, CACHE]:
+        for mon_dir in sorted(glob.glob(
+                os.path.join(root_dir, fuzzer, target, program, "*", "monitor"))):
+            if not os.path.isdir(mon_dir):
+                continue
+            timestamps = sorted([int(f) for f in os.listdir(mon_dir) if f.isdigit()])
+            if not timestamps:
+                continue
+            last_file = os.path.join(mon_dir, str(timestamps[-1]))
+            try:
+                with open(last_file) as f:
+                    header = f.readline().strip().split(',')
+                    values = f.readline().strip().split(',')
+            except OSError:
+                continue
+            for i in range(0, len(header), 2):
+                bug_id = header[i].replace('_R', '')
+                try:
+                    triggered = int(values[i+1]) if i+1 < len(values) and values[i+1].strip() else 0
+                except (ValueError, IndexError):
+                    triggered = 0
+                if triggered > 0:
+                    union.add(bug_id)
+            found_any = True
+        if found_any:
+            break  # found data in AR, don't fall through to CACHE
+    return union if found_any else None
 
 
 def find_all_programs(target):
@@ -752,10 +840,9 @@ def plot_reset_summary(reset_data):
         for key, d in reset_data[fuzzer].items():
             parts = key.split('/')
             target, program = parts[0], parts[1]
-            # Get baseline final coverage
+            # Get baseline and CD final coverage (both as map_size%)
             base_cov = get_final_cov(base, target, program)
-
-            cd_cov = d['final_cov']
+            cd_cov = get_final_cov(fuzzer, target, program)
             improvement = ((cd_cov - base_cov) / base_cov * 100) if base_cov > 0 else 0
 
             ax.scatter(d['resets'], improvement,
@@ -784,33 +871,41 @@ def plot_reset_summary(reset_data):
 def generate_summary_table():
     """Print a cross-pair table: bugs and coverage for baseline vs CD."""
     lines = []
-    lines.append("=" * 100)
+    lines.append("=" * 120)
     lines.append("CROSS-PAIR SUMMARY TABLE — seed_4")
     lines.append(f"Parameters: WINDOW=100  THRESHOLD=0.05  CONSECUTIVE=5  "
                  f"STAGNATION_FACTOR=0.5  COOLDOWN=10  EMA_ALPHA=0.1")
-    lines.append("=" * 100)
+    lines.append("=" * 120)
 
-    grand = {"base_bugs": 0, "cd_bugs": 0, "base_cov": 0, "cd_cov": 0, "resets": 0, "programs": 0}
+    grand = {"base_bugs": 0.0, "cd_bugs": 0.0, "base_uni": 0, "cd_uni": 0,
+             "base_cov": 0.0, "cd_cov": 0.0, "resets": 0, "programs": 0}
 
     for base, cd in PAIRS.items():
         lines.append(f"\n{'─'*100}")
         lines.append(f"  PAIR: {base}  →  {cd}")
-        lines.append(f"  {'program':<40} {'base_bugs':>10} {'cd_bugs':>10} "
-                     f"{'Δbugs':>7} {'base_cov':>10} {'cd_cov':>10} "
-                     f"{'Δcov%':>8} {'resets':>8} {'verdict':>10}")
-        lines.append(f"  {'-'*97}")
+        lines.append(f"  {'program':<40} {'base_avg':>9} {'cd_avg':>9} {'Δavg':>7} "
+                     f"{'base_uni':>9} {'cd_uni':>9} {'Δuni':>6} "
+                     f"{'base_cov':>10} {'cd_cov':>10} {'Δcov%':>8} {'resets':>8} {'verdict':>10}")
+        lines.append(f"  {'-'*110}")
 
-        pair_totals = {"base_bugs": 0, "cd_bugs": 0,
+        pair_totals = {"base_bugs": 0.0, "cd_bugs": 0.0,
+                       "base_uni": 0, "cd_uni": 0,
                        "base_cov": 0.0, "cd_cov": 0.0, "resets": 0, "n": 0}
 
         for target in TARGETS:
             programs = find_all_programs(target)
             for program in programs:
-                # bugs
-                base_bugs_d, _, _ = find_monitor_data(base, target, program)
-                cd_bugs_d, _, _ = find_monitor_data(cd, target, program)
-                bb = sum(1 for v in base_bugs_d.values() if v['triggered'] > 0) if base_bugs_d else 0
-                cb = sum(1 for v in cd_bugs_d.values() if v['triggered'] > 0) if cd_bugs_d else 0
+                # bugs — averaged across all reps
+                base_bugs_d = find_monitor_data_avg(base, target, program)
+                cd_bugs_d   = find_monitor_data_avg(cd, target, program)
+                bb = sum(base_bugs_d.values()) if base_bugs_d else 0.0
+                cb = sum(cd_bugs_d.values())   if cd_bugs_d   else 0.0
+
+                # bugs — union across all reps
+                base_uni_s = find_monitor_data_union(base, target, program)
+                cd_uni_s   = find_monitor_data_union(cd, target, program)
+                bu = len(base_uni_s) if base_uni_s is not None else 0
+                cu = len(cd_uni_s)   if cd_uni_s   is not None else 0
 
                 # coverage
                 bc = get_final_cov(base, target, program)
@@ -831,11 +926,14 @@ def generate_summary_table():
                     verdict = "base+" if bb >= cb else "cov-"
 
                 label = f"{target}/{program}"
-                lines.append(f"  {label:<40} {bb:>10} {cb:>10} {cb-bb:>+7} "
-                              f"{bc:>10} {cc:>10} {dcov_pct:>+8.1f}% {resets:>8}  {verdict:>9}")
+                lines.append(f"  {label:<40} {bb:>9.2f} {cb:>9.2f} {cb-bb:>+7.2f} "
+                              f"{bu:>9} {cu:>9} {cu-bu:>+6} "
+                              f"{bc:>10.2f} {cc:>10.2f} {dcov_pct:>+8.1f}% {resets:>8}  {verdict:>9}")
 
                 pair_totals["base_bugs"] += bb
                 pair_totals["cd_bugs"] += cb
+                pair_totals["base_uni"] += bu
+                pair_totals["cd_uni"] += cu
                 pair_totals["base_cov"] += bc
                 pair_totals["cd_cov"] += cc
                 pair_totals["resets"] += resets
@@ -844,15 +942,19 @@ def generate_summary_table():
         n = pair_totals["n"] or 1
         avg_dcov = (pair_totals["cd_cov"] - pair_totals["base_cov"]) / pair_totals["base_cov"] * 100 \
                    if pair_totals["base_cov"] > 0 else 0
-        lines.append(f"  {'-'*97}")
-        lines.append(f"  {'PAIR TOTAL':<40} {pair_totals['base_bugs']:>10} "
-                     f"{pair_totals['cd_bugs']:>10} "
-                     f"{pair_totals['cd_bugs']-pair_totals['base_bugs']:>+7} "
-                     f"{pair_totals['base_cov']:>10} {pair_totals['cd_cov']:>10} "
+        lines.append(f"  {'-'*110}")
+        lines.append(f"  {'PAIR TOTAL':<40} {pair_totals['base_bugs']:>9.2f} "
+                     f"{pair_totals['cd_bugs']:>9.2f} "
+                     f"{pair_totals['cd_bugs']-pair_totals['base_bugs']:>+7.2f} "
+                     f"{pair_totals['base_uni']:>9} {pair_totals['cd_uni']:>9} "
+                     f"{pair_totals['cd_uni']-pair_totals['base_uni']:>+6} "
+                     f"{pair_totals['base_cov']:>10.2f} {pair_totals['cd_cov']:>10.2f} "
                      f"{avg_dcov:>+8.1f}% {pair_totals['resets']:>8}")
 
         grand["base_bugs"] += pair_totals["base_bugs"]
         grand["cd_bugs"]   += pair_totals["cd_bugs"]
+        grand["base_uni"]  += pair_totals["base_uni"]
+        grand["cd_uni"]    += pair_totals["cd_uni"]
         grand["base_cov"]  += pair_totals["base_cov"]
         grand["cd_cov"]    += pair_totals["cd_cov"]
         grand["resets"]    += pair_totals["resets"]
@@ -860,13 +962,15 @@ def generate_summary_table():
 
     grand_dcov = (grand["cd_cov"] - grand["base_cov"]) / grand["base_cov"] * 100 \
                  if grand["base_cov"] > 0 else 0
-    lines.append(f"\n{'='*100}")
-    lines.append(f"  {'GRAND TOTAL':<40} {grand['base_bugs']:>10} "
-                 f"{grand['cd_bugs']:>10} "
-                 f"{grand['cd_bugs']-grand['base_bugs']:>+7} "
-                 f"{grand['base_cov']:>10} {grand['cd_cov']:>10} "
+    lines.append(f"\n{'='*120}")
+    lines.append(f"  {'GRAND TOTAL':<40} {grand['base_bugs']:>9.2f} "
+                 f"{grand['cd_bugs']:>9.2f} "
+                 f"{grand['cd_bugs']-grand['base_bugs']:>+7.2f} "
+                 f"{grand['base_uni']:>9} {grand['cd_uni']:>9} "
+                 f"{grand['cd_uni']-grand['base_uni']:>+6} "
+                 f"{grand['base_cov']:>10.2f} {grand['cd_cov']:>10.2f} "
                  f"{grand_dcov:>+8.1f}% {grand['resets']:>8}")
-    lines.append("=" * 100)
+    lines.append("=" * 120)
 
     text = "\n".join(lines)
     path = os.path.join(OUTDIR, "summary_table.txt")
@@ -931,9 +1035,11 @@ def generate_parameter_eval(reset_data):
             target, program = parts[0], parts[1]
             base_pd = find_plot_data(base, target)
             base_data = parse_plot_data(base_pd[program]) if program in base_pd else None
-            if base_data is None or d['final_cov'] == 0:
+            base_cov = get_final_cov(base, target, program)
+            cd_cov = get_final_cov(fz, target, program)
+            if base_data is None or cd_cov == 0.0 or base_cov == 0.0:
                 continue
-            delta_pct = (d['final_cov'] - base_data['paths'][-1]) / base_data['paths'][-1] * 100
+            delta_pct = (cd_cov - base_cov) / base_cov * 100
             r = d['resets']
             if r == 0:    bucket_deltas[0].append(delta_pct)
             elif r <= 2:  bucket_deltas["1-2"].append(delta_pct)

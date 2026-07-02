@@ -1,100 +1,267 @@
 # Handoff
 
-## Current Goal
+## Current State (2026-06-29)
 
-Produce paper-quality results (10 reps × 24h × 12 fuzzers × 21 Magma programs) by merging two runs:
+10/10 baseline reps complete (dist11–dist13, merged). dist14 still running (9/20 done). dist15
+fuzzing complete but Utah NFS hit 100% quota — pull script running in `tmux:dist15pull` on
+amd131.utah.cloudlab.us, writing to Wisconsin `/mydata/dist15/ar/` (~20 min, ~11:05 AM).
+**Next action: wait for dist15 pull to finish, then analyze dist15. Wait for dist14 to complete.**
 
-- **`dist11`** (reps 0–4): running on cluster `eldarfin-309063`, **finishing ~June 26 12:00 CEST** (noon Thursday)
-- **`dist12`** (reps 5–9): to launch on a NEW CloudLab experiment, **finishing ~June 28 12:00 CEST** (noon Saturday)
-
-After both finish, merge and run analysis. See § Merge and § Analysis below.
-
----
-
-## dist11 Status (as of 2026-06-24)
-
-**15/60 workers done, 45 running, 0 failed.**
-
-Important: each CloudLab worker node has only **8 CPUs**. With 21 Magma programs, captain
-queues them in 3 waves (8 / 8 / 5 programs each, one wave per 24h). Total runtime ≈ 72h.
-
-| Wave | Programs | Started | Finishes |
-|---|---|---|---|
-| Wave 1 | sqlite3, libpng, lua, libsndfile, libtiff×2, libxml2×2 | June 23 ~04:38 CDT | June 24 ✅ |
-| Wave 2 | poppler×3, php×4, openssl×6 (partial) | June 24 ~04:48 CDT | June 25 ~05:35 CDT |
-| Wave 3 | remaining programs | June 25 ~04:48 CDT | **June 26 ~05:35 CDT** |
-
-Monitor dist11:
-```bash
-# from head node of eldarfin-309063 (192.168.1.1):
-echo "done: $(ls /proj/CDFuzzing/distributed/dist11/status/*.done 2>/dev/null | wc -l) / 60"
-tail -5 /proj/CDFuzzing/dist11_orch.log
-```
-
-Results accumulate at `/proj/CDFuzzing/distributed/dist11/ar/` as each worker completes.
-
----
-
-## dist12 Setup (reps 5–9)
-
-**Create a new CloudLab experiment** using the same profile with these parameters:
-
-| Parameter | Value |
+| Step | Status |
 |---|---|
-| `nodesPerFuzzer` | `5` |
-| `repOffset` | **`5`** ← critical |
-| `sharedDir` | `/proj/CDFuzzing` (same NFS as dist11) |
-| `fuzzerSet` | `all` |
-| `phystype` | leave blank or same as dist11 |
+| dist11: reps 0–4 (Wisconsin) | ✅ COMPLETE — `/proj/CDFuzzing/distributed/dist11/ar/` |
+| dist12: reps 5–7 (Utah) | ✅ COMPLETE — `/proj/CDFuzzing/distributed/dist12/ar/` |
+| Transfer dist12 → Wisconsin | ✅ COMPLETE |
+| merged/ar/ symlink tree | ✅ COMPLETE — symlinks at `/proj/CDFuzzing/distributed/merged/ar/` |
+| dist13: reps 8–9 (Utah) | ✅ COMPLETE + MERGED — `/mydata/dist13/ar/` on Wisconsin, symlinked into merged/ar/ as reps 8–9 (June 27 ~14:48) |
+| 10-rep analysis | ✅ COMPLETE — evaluation.tex table confirmed correct; guard stats unchanged (144/3222, 95.5%) |
+| Paper (evaluation.tex) | ✅ CURRENT — 10-rep values, compiles clean |
+| dfcov/dfbug/dfbugdelta analysis | ✅ COMPLETE (2026-06-29) — see Results section below |
+| dist14: honggfuzz KEEP_RECENT=50 (Wisconsin) | ⏳ IN PROGRESS — 9/20 done; last batch containers started June 28 ~17:46 CDT, expected done ~June 29 18:00–18:30 CDT |
+| dist15: aflcd_v2/v3 + aflfastcd_v2 (Utah) | ✅ ANALYZED — data at Wisconsin `/mydata/dist15/ar/`; see Results below |
 
-This will create 60 worker nodes named `afl-5` through `honggfuzzcd-9` with the correct rep IDs
-in `/local/cdfuzz-role`. The head generates a manifest with reps 5–9 automatically.
+### 10-Rep Results (correct Δbugs methodology)
 
-Once the experiment is up and workers have finished booting (check `/local/setup.log` on head):
-```bash
-# SSH to the new head node (192.168.1.1 on the new experiment's LAN)
-cd /local/repository/cloudlab
-tmux new-session -d -s dist12 \
-  "bash orchestrate.sh --run-id dist12 --timeout 24h --poll 60 \
-     2>&1 | tee /proj/CDFuzzing/dist12_orch.log"
-echo "dist12 launched"
-```
+**Δbugs** = sum over programs of (|cd_union_bugs| − |base_union_bugs|) where union is over all 10 reps.
+This is the metric used in evaluation.tex and confirmed correct on June 29.
 
-Monitor dist12:
-```bash
-echo "done: $(ls /proj/CDFuzzing/distributed/dist12/status/*.done 2>/dev/null | wc -l) / 60"
-tail -5 /proj/CDFuzzing/dist12_orch.log
-```
+| Pair | Δcov | Δbugs (all progs) | Δbugs (fired progs only) | Programs fired | Resets |
+|---|---|---|---|---|---|
+| afl → aflcd | **+1.0%** | **-3** | **+1** | 7/21 | 19 |
+| aflfast → aflfastcd | **+1.6%** | **0** | **0** | 9/21 | 8 |
+| moptafl → moptaflcd | **+4.1%** | **+8** | **+6** | 20/21 | 78 |
+| aflplusplus → aflpluspluscd | -1.8% | **+1** | **0** | 16/21 | 15 |
+| fairfuzz → fairfuzzcd | **+2.4%** | **+6** | **+2** | 8/21 | 10 |
+| honggfuzz → honggfuzzcd | -- | **+1** | **0** | 18/21 | 14 |
 
-Expected completion: **June 28 ~12:00 CEST** (Saturday noon Amsterdam).
-
----
-
-## Merge Instructions (after both complete)
-
-```bash
-mkdir -p /proj/CDFuzzing/distributed/dist11_merged/{ar,plots}
-
-# Merge dist11 (reps 0-4) + dist12 (reps 5-9) into one ar/ tree
-rsync -a /proj/CDFuzzing/distributed/dist11/ar/ \
-         /proj/CDFuzzing/distributed/dist11_merged/ar/
-rsync -a /proj/CDFuzzing/distributed/dist12/ar/ \
-         /proj/CDFuzzing/distributed/dist11_merged/ar/
-
-# Verify: each program dir should have 10 rep subdirs (0-9)
-find /proj/CDFuzzing/distributed/dist11_merged/ar/afl/sqlite3 -maxdepth 2 -type d
-```
+> **Δbugs (fired only)** restricts the union to reps where that program had ≥1 reset.
+> **−3 for AFL** comes entirely from zero-reset programs (variance, not CD-caused).
+> **+6 for FairFuzz (all)** is dominated by libsndfile (+4, 0 resets) — variance; fired-only = +2.
+> **Δcov values** from evaluation.tex (relative change); honggfuzz uses raw edge counts (incomparable).
 
 ---
 
-## Analysis
+### Root Cause Analysis (2026-06-27)
 
-Run from either head node (both mount the same `/proj/CDFuzzing` NFS):
+**AFL-CD (−3 bugs):** Cascade reset pattern found. Resets fire at minutes 28, 81, 127, 155, 176, 198 — then NONE for ~1,242 remaining min (86% of campaign = vanilla AFL). Root cause: each reset depletes corpus (post-reset exploration shrinks 200→53→46→28→21→22 min). The −3 bug regression comes entirely from programs with 0 resets — pure statistical noise, not a real regression. Fix: longer cooldown (CL=60) prevents cascade by guaranteeing ≥72 min between resets.
+
+**AFLFast-CD (+1 bug):** Only rep7/sqlite3 fired (once, +1 bug, +29% cov). Others never triggered because p-value recovered before consecutive=3. Fix: C=2 (fire on 2 consecutive stagnant windows) makes sqlite3 fire in ~5/10 reps.
+
+### dist15 Results (2026-06-29, analysis complete)
+
+Utah NFS was 100% full at end of run; data pulled directly from workers → Wisconsin `/mydata/dist15/ar/` via `pull_dist15.sh`. aflfastcd_v2 limited to 5/10 reps (workers .35-.39 inaccessible). monitor/ dirs deleted from dist15/ar/ (inode exhaustion). Analysis script: `analyze_dist15.py`.
+
+| Variant | C | CL | Total Resets | vs Baseline | Mean Δcov | Δbugs |
+|---|---|---|---|---|---|---|
+| aflcd_v2 | 3 | 60 | 105 (10 reps) | aflcd: 200 (−47%) | +1.15% | +2 |
+| aflcd_v3 | 5 | 120 | 113 (10 reps) | aflcd: 200 (−43%) | +1.27% | +4 |
+| aflfastcd_v2 | 2 | 25 | 39 (5 reps) | aflfastcd: 83 | +0.63% | 0 |
+
+**Key takeaways:**
+1. **CL=60 confirmed**: reduces cascade (php/json 64→22, php/unserialize 59→28, libpng 60→40). Per-rep counts now uniform (2-4/rep vs 4-9/rep before).
+2. **CL is dominant**: raising C from 3→5 barely changes reset count (v2 ≈ v3).
+3. **aflfastcd_v2 C=2 hypothesis failed**: sqlite3 fired 0/5 reps (expected ~5/10). C=2 appears no better than C=3 for sqlite3.
+
+### New Experiments
+
+**dist14** — honggfuzz/honggfuzzcd KEEP_RECENT=50 (Wisconsin, 20 workers, reps 0–9)
+- Parameters: W=5, C=2, CL=5, SR=1, KEEP_RECENT=50 (soft reset keeps 50 most recent inputs)
+- Baseline honggfuzz reps 0–9 co-running for direct comparison
+- Data: `/proj/CDFuzzing/distributed/dist14/ar/`
+
+**dist15** — AFL-CD and AFLFast-CD parameter variants (Utah, 30 workers, reps 0–9)
+
+| Fuzzer | C | CL | Hypothesis |
+|---|---|---|---|
+| `aflcd_v2` | 3 | 60 | 6× longer cooldown prevents corpus depletion cascade |
+| `aflcd_v3` | 5 | 120 | Higher evidence + very long cooldown → 3–4 resets, not 6 |
+| `aflfastcd_v2` | 2 | 25 | C=2 fires on 2-window stagnation → sqlite3 triggers in ~5/10 reps |
+
+- Seeds: 1000–1009 (reps 0–9), same as existing baselines → paired comparison valid
+- Worker assignments: aflcd_v2 → IPs .10–.19, aflcd_v3 → .20–.29, aflfastcd_v2 → .30–.39
+- Data: `/proj/cdfuzzing-PG0/distributed/dist15/ar/` (Utah, then rsync to Wisconsin)
+
+---
+
+## ~~Next: dist13 (reps 8–9, Utah cluster2)~~ COMPLETE
+
+> dist13 is done (25/25 workers). Commands below are kept for reference. Rsync to Wisconsin still needed.
+
+Full procedure is in CLUSTER2.md. Summary:
+
+**Step 1 — Update manifest on cluster2:**
 ```bash
-CDFUZZ_BASE=/proj/CDFuzzing/distributed/dist11_merged \
-CDFUZZ_OUTDIR=/proj/CDFuzzing/distributed/dist11_merged/plots \
-python3 /local/repository/plot_seed4.py
+ssh eldarfin@amd131.utah.cloudlab.us '
+  cp /proj/cdfuzzing-PG0/cluster/manifest.txt \
+     /proj/cdfuzzing-PG0/cluster/manifest.dist12.bak
+  {
+    echo "# name ip fuzzer rep   (dist13: reps 8-9, $(date +%F\ %T))"
+    echo "head 192.168.1.1 - -"
+    awk "$4==5{print $3\"-8\", $2, $3, 8}
+         $4==6{print $3\"-9\", $2, $3, 9}" \
+      /proj/cdfuzzing-PG0/cluster/manifest.dist12.bak
+  } > /proj/cdfuzzing-PG0/cluster/manifest.txt
+  wc -l /proj/cdfuzzing-PG0/cluster/manifest.txt
+'
 ```
+
+**Step 2 — Launch dist13:**
+```bash
+ssh eldarfin@amd131.utah.cloudlab.us '
+  mkdir -p /proj/cdfuzzing-PG0/distributed/dist13/log
+  nohup /local/repository/cloudlab/orchestrate.sh \
+    --run-id dist13 \
+    --repo /local/repository \
+    --shared /proj/cdfuzzing-PG0 \
+    --no-merge \
+    > /proj/cdfuzzing-PG0/distributed/dist13/log/orchestrate.log 2>&1 &
+  echo "dist13 launched, PID: $!"
+'
+```
+
+**Monitor dist13:**
+```bash
+ssh eldarfin@amd131.utah.cloudlab.us '
+  echo "done: $(ls /proj/cdfuzzing-PG0/distributed/dist13/status/*.done 2>/dev/null | wc -l) / 24"
+  tail -5 /proj/cdfuzzing-PG0/distributed/dist13/log/orchestrate.log
+'
+```
+
+---
+
+## After dist13 — Build 10-rep merged tree and re-run analysis
+
+```bash
+# 1. Rsync ar/ (without monitor/)
+rsync -avz --progress --exclude='monitor' \
+  eldarfin@amd131.utah.cloudlab.us:/proj/cdfuzzing-PG0/distributed/dist13/ar/ \
+  /proj/CDFuzzing/distributed/dist13/ar/
+
+# 2. Thin monitor on Utah
+ssh eldarfin@amd131.utah.cloudlab.us 'python3 - <<EOF
+import os, shutil
+AR = "/proj/cdfuzzing-PG0/distributed/dist13/ar"
+THIN = "/proj/cdfuzzing-PG0/distributed/dist13_thin_mon"
+count = 0
+for fuzzer in sorted(os.listdir(AR)):
+  for target in sorted(os.listdir(f"{AR}/{fuzzer}")):
+    for prog in sorted(os.listdir(f"{AR}/{fuzzer}/{target}")):
+      for rep in sorted(os.listdir(f"{AR}/{fuzzer}/{target}/{prog}")):
+        mon = f"{AR}/{fuzzer}/{target}/{prog}/{rep}/monitor"
+        if not os.path.isdir(mon): continue
+        files = sorted([f for f in os.listdir(mon) if f.isdigit()], key=int)
+        if not files: continue
+        thin = f"{THIN}/{fuzzer}/{target}/{prog}/{rep}/monitor"
+        os.makedirs(thin, exist_ok=True)
+        for f in ([files[0]] if len(files)==1 else [files[0], files[-1]]):
+          shutil.copy2(f"{mon}/{f}", f"{thin}/{f}")
+        count += 1
+print(f"done: {count} monitor dirs thinned")
+EOF'
+rsync -avz eldarfin@amd131.utah.cloudlab.us:/proj/cdfuzzing-PG0/distributed/dist13_thin_mon/ \
+  /proj/CDFuzzing/distributed/dist13/
+
+# 3. Extend merged/ symlinks to include reps 8-9
+python3 -c "
+import os
+AR13 = '/proj/CDFuzzing/distributed/dist13/ar'
+MERGED = '/proj/CDFuzzing/distributed/merged/ar'
+created = 0
+for fuzzer in os.listdir(AR13):
+  for target in os.listdir(f'{AR13}/{fuzzer}'):
+    for prog in os.listdir(f'{AR13}/{fuzzer}/{target}'):
+      for rep in os.listdir(f'{AR13}/{fuzzer}/{target}/{prog}'):
+        src = f'{AR13}/{fuzzer}/{target}/{prog}/{rep}'
+        dst = f'{MERGED}/{fuzzer}/{target}/{prog}/{rep}'
+        if not os.path.exists(dst):
+          os.makedirs(os.path.dirname(dst), exist_ok=True)
+          os.symlink(src, dst)
+          created += 1
+print(f'created {created} symlinks')
+"
+
+# 4. Re-run analysis
+mkdir -p /proj/CDFuzzing/distributed/merged/plots /proj/CDFuzzing/distributed/merged/log
+CDFUZZ_BASE=/proj/CDFuzzing/distributed/merged \
+CDFUZZ_OUTDIR=/proj/CDFuzzing/distributed/merged/plots \
+  python3 /users/eldarfin/cdfuzzing/plot_seed4.py \
+  > /proj/CDFuzzing/distributed/merged/log/analysis.log 2>&1 &
+echo "PID: $!"
+```
+
+---
+
+## After dist15 completes (~June 28 18:00 MDT)
+
+```bash
+# 1. Rsync dist15 results from Utah to Wisconsin
+rsync -avz --progress \
+  eldarfin@amd131.utah.cloudlab.us:/proj/cdfuzzing-PG0/distributed/dist15/ar/ \
+  /proj/CDFuzzing/distributed/dist15/ar/
+
+# 2. Also rsync dist13 (reps 8-9, not yet on Wisconsin)
+rsync -avz --progress --exclude='monitor' \
+  eldarfin@amd131.utah.cloudlab.us:/proj/cdfuzzing-PG0/distributed/dist13/ar/ \
+  /proj/CDFuzzing/distributed/dist13/ar/
+
+# 3. Extend merged/ar/ symlinks for dist13 reps 8-9
+python3 -c "
+import os
+AR13 = '/proj/CDFuzzing/distributed/dist13/ar'
+MERGED = '/proj/CDFuzzing/distributed/merged/ar'
+created = 0
+for fuzzer in os.listdir(AR13):
+  for target in os.listdir(f'{AR13}/{fuzzer}'):
+    for prog in os.listdir(f'{AR13}/{fuzzer}/{target}'):
+      for rep in os.listdir(f'{AR13}/{fuzzer}/{target}/{prog}'):
+        src = f'{AR13}/{fuzzer}/{target}/{prog}/{rep}'
+        dst = f'{MERGED}/{fuzzer}/{target}/{prog}/{rep}'
+        if not os.path.exists(dst):
+          os.makedirs(os.path.dirname(dst), exist_ok=True)
+          os.symlink(src, dst)
+          created += 1
+print(f'created {created} symlinks')
+"
+
+# 4. Add dist15 variants to merged/ar/ (aflcd_v2, aflcd_v3, aflfastcd_v2)
+python3 -c "
+import os
+AR15 = '/proj/CDFuzzing/distributed/dist15/ar'
+MERGED = '/proj/CDFuzzing/distributed/merged/ar'
+created = 0
+for fuzzer in os.listdir(AR15):
+  for target in os.listdir(f'{AR15}/{fuzzer}'):
+    for prog in os.listdir(f'{AR15}/{fuzzer}/{target}'):
+      for rep in os.listdir(f'{AR15}/{fuzzer}/{target}/{prog}'):
+        src = f'{AR15}/{fuzzer}/{target}/{prog}/{rep}'
+        dst = f'{MERGED}/{fuzzer}/{target}/{prog}/{rep}'
+        if not os.path.exists(dst):
+          os.makedirs(os.path.dirname(dst), exist_ok=True)
+          os.symlink(src, dst)
+          created += 1
+print(f'created {created} symlinks')
+"
+
+# 5. Re-run analysis (include new variant pairs vs baselines)
+mkdir -p /proj/CDFuzzing/distributed/merged/plots
+CDFUZZ_BASE=/proj/CDFuzzing/distributed/merged \
+CDFUZZ_OUTDIR=/proj/CDFuzzing/distributed/merged/plots \
+  python3 /users/eldarfin/cdfuzzing/plot_seed4.py \
+  > /proj/CDFuzzing/distributed/merged/log/analysis.log 2>&1 &
+echo "PID: $!"
+```
+
+Note: `plot_seed4.py` needs to be updated to add the new fuzzer pairs:
+- `(aflcd_v2, afl)`, `(aflcd_v3, afl)`, `(aflfastcd_v2, aflfast)`
+
+---
+
+## After 10-rep analysis — Paper
+
+1. Fix `content/evaluation.tex` setup paragraph: current text says "mode 2, 2× boost, stagnation 0.25, cooldown 200" — all wrong. Correct values: SR=1, boost 1×, stagnation factor 0.5, cooldown 10 min (AFL/AFLFast/FairFuzz), 25 min (AFL++), 5 min (honggfuzz).
+2. Update `content/evaluation.tex` table with 10-rep values.
+3. Write the RQ1/RQ2/RQ3 paragraphs (currently say "TODO" in evaluation.tex).
+4. Compile: `cd /users/eldarfin/Drift-Aware-Fuzzing && pdflatex -interaction=nonstopmode main.tex > /dev/null && bibtex main > /dev/null && pdflatex -interaction=nonstopmode main.tex > /dev/null && pdflatex -interaction=nonstopmode main.tex 2>&1 | tail -3`
 
 ---
 
@@ -127,6 +294,40 @@ python3 /local/repository/plot_seed4.py
 ---
 
 ## Current State
+
+**`dist11` COMPLETE — 12 fuzzers × 5 reps × 24h (reps 0–4, Wisconsin)**
+- 60/60 workers done, ~05:35 CDT 2026-06-26
+- Data: `/proj/CDFuzzing/distributed/dist11/ar/`
+
+**`dist12` COMPLETE — 12 fuzzers × 3 reps × 24h (reps 5–7, Utah cluster2)**
+- 36/36 workers done, ~07:35 CDT 2026-06-26
+- Data: `/proj/CDFuzzing/distributed/dist12/ar/` (transferred to Wisconsin; thin monitors)
+- Note: aflfast/sqlite3 rep 1 missing (campaign failure on Utah)
+
+**`dist13` COMPLETE — 12 fuzzers × 2 reps × 24h (reps 8–9, Utah cluster2)**
+- 25/25 workers done (by 2026-06-27)
+- Data: `/proj/cdfuzzing-PG0/distributed/dist13/ar/` (Utah only — NOT yet rsynced to Wisconsin)
+- Pending: rsync to Wisconsin, extend merged/ar/ symlinks to reps 8–9, rerun 10-rep analysis
+
+**`dist14` RUNNING — honggfuzz/honggfuzzcd KEEP_RECENT=50 (Wisconsin, 2026-06-27)**
+- 20 workers (honggfuzz × 10 reps + honggfuzzcd × 10 reps), launched ~2026-06-27 17:00 MDT
+- Parameters: W=5, C=2, CL=5, SR=1, KEEP_RECENT=50
+- Expected completion: ~June 27 18:30 MDT
+- Data: `/proj/CDFuzzing/distributed/dist14/ar/`
+
+**`dist15` RUNNING — AFL-CD/AFLFast-CD parameter variants (Utah, 2026-06-27)**
+- 30 workers: aflcd_v2 (C=3,CL=60) × 10 + aflcd_v3 (C=5,CL=120) × 10 + aflfastcd_v2 (C=2,CL=25) × 10
+- Launched 2026-06-27 17:09 MDT; expected completion ~June 28 18:00 MDT
+- All 30 workers confirmed building (containers started at 17:18 MDT for early programs)
+- Data: `/proj/cdfuzzing-PG0/distributed/dist15/ar/` (Utah)
+
+**`merged` (8-rep) COMPLETE — reps 0–7 via symlink tree**
+- 1,995 symlinks at `/proj/CDFuzzing/distributed/merged/ar/`
+- Analysis complete: `/proj/CDFuzzing/distributed/merged/plots/summary_table.txt`
+- Paper table updated: `Drift-Aware-Fuzzing/content/evaluation.tex` (compiles clean, 6 pages)
+
+**`dist10` LOST — CloudLab lease expired mid-run**
+- 12 fuzzers × 5 reps × 24h, launched 2026-06-22, lease expired ~14h in; data wiped
 
 **Seed 4 experiments — COMPLETE (4 of 5 intended pairs)**
 

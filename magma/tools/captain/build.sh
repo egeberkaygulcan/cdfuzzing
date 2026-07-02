@@ -20,6 +20,13 @@ MAGMA=${MAGMA:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" >/dev/null 2>&1 \
     && pwd)"}
 source "$MAGMA/tools/captain/common.sh"
 
+# Skip build if the image already exists (e.g. tagged from another fuzzer variant).
+if docker inspect "$IMG_NAME" > /dev/null 2>&1; then
+    echo "Image $IMG_NAME already exists, skipping build."
+    echo "$IMG_NAME"
+    exit 0
+fi
+
 CANARY_MODE=${CANARY_MODE:-1}
 
 case $CANARY_MODE in
