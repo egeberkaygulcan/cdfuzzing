@@ -1,24 +1,53 @@
 # Handoff
 
-## Current State (2026-06-29)
+## Current State (2026-07-01)
 
-10/10 baseline reps complete (dist11–dist13, merged). dist14 still running (9/20 done). dist15
-fuzzing complete but Utah NFS hit 100% quota — pull script running in `tmux:dist15pull` on
-amd131.utah.cloudlab.us, writing to Wisconsin `/mydata/dist15/ar/` (~20 min, ~11:05 AM).
-**Next action: wait for dist15 pull to finish, then analyze dist15. Wait for dist14 to complete.**
+Experiment expiring. Data archived to `/mydata/` on head and partially to local Mac. Worker SSH
+restored via drop-in at `/etc/ssh/cdfuzz_authorized_keys` on all 60 Wisconsin + 36 Utah workers.
+dist11/dist12 raw data partially recovered from worker `/mydata/` disks to NFS.
+NFS at ~80% (21 GB free) — stopped transfers to avoid filling disk.
+**Next action: analyze dist14 vs baseline honggfuzz; analyze dist15 vs baseline.**
 
 | Step | Status |
 |---|---|
-| dist11: reps 0–4 (Wisconsin) | ✅ COMPLETE — `/proj/CDFuzzing/distributed/dist11/ar/` |
-| dist12: reps 5–7 (Utah) | ✅ COMPLETE — `/proj/CDFuzzing/distributed/dist12/ar/` |
-| Transfer dist12 → Wisconsin | ✅ COMPLETE |
-| merged/ar/ symlink tree | ✅ COMPLETE — symlinks at `/proj/CDFuzzing/distributed/merged/ar/` |
-| dist13: reps 8–9 (Utah) | ✅ COMPLETE + MERGED — `/mydata/dist13/ar/` on Wisconsin, symlinked into merged/ar/ as reps 8–9 (June 27 ~14:48) |
+| dist11: reps 0–4 (Wisconsin) | ⚠ PARTIAL — `/proj/CDFuzzing/distributed/dist11/ar/` has rep 0 full + partial reps 1–4 (NFS space limited). Worker nodes accessible at 192.168.1.10–69 with cluster key. |
+| dist12: reps 5–7 (Utah) | ⚠ PARTIAL — `/proj/CDFuzzing/distributed/dist12/ar/` has reps 0,5,6,7. Workers at `<fuzzer>-N.eldarfin-309225.cdfuzzing-pg0.utah.cloudlab.us`. |
+| dist13: reps 8–9 (Utah) | ✅ COMPLETE — `/mydata/dist13/ar/` on Wisconsin; archived to `/mydata/dist13_ar.tar.gz` (428 MB) |
+| merged/ar/ symlink tree | ⚠ PARTIAL — reps 8–9 working (→ dist13); reps 0–7 symlinks broken (dist11/dist12 data was deleted earlier, now partially restored) |
 | 10-rep analysis | ✅ COMPLETE — evaluation.tex table confirmed correct; guard stats unchanged (144/3222, 95.5%) |
 | Paper (evaluation.tex) | ✅ CURRENT — 10-rep values, compiles clean |
 | dfcov/dfbug/dfbugdelta analysis | ✅ COMPLETE (2026-06-29) — see Results section below |
-| dist14: honggfuzz KEEP_RECENT=50 (Wisconsin) | ⏳ IN PROGRESS — 9/20 done; last batch containers started June 28 ~17:46 CDT, expected done ~June 29 18:00–18:30 CDT |
-| dist15: aflcd_v2/v3 + aflfastcd_v2 (Utah) | ✅ ANALYZED — data at Wisconsin `/mydata/dist15/ar/`; see Results below |
+| dist14: honggfuzz KEEP_RECENT=50 (Wisconsin) | ✅ COMPLETE — 20/20 workers done; archived to `/mydata/dist14_ar.tar.gz` (130 MB); analysis pending |
+| dist15: aflcd_v2/v3 + aflfastcd_v2 (Utah) | ✅ ANALYZED — data at `/mydata/dist15/ar/`; archived to `/mydata/dist15_ar.tar.gz` (184 MB) |
+
+### Data Archives on Wisconsin `/mydata/` (scp to local machine)
+
+```bash
+scp eldarfin@pc536.emulab.net:/mydata/dist13_ar.tar.gz ~/cdfuzzing-data/
+scp eldarfin@pc536.emulab.net:/mydata/dist14_ar.tar.gz ~/cdfuzzing-data/
+scp eldarfin@pc536.emulab.net:/mydata/dist15_ar.tar.gz ~/cdfuzzing-data/
+scp eldarfin@pc536.emulab.net:/mydata/hfuzz_paired_9rep.log ~/cdfuzzing-data/
+scp eldarfin@pc536.emulab.net:/mydata/cdfuzzing_repo.zip ~/cdfuzzing-data/
+scp eldarfin@pc536.emulab.net:/mydata/paper_repo.zip ~/cdfuzzing-data/
+```
+
+### SSH Access to Workers (restored 2026-07-01)
+
+Cluster key: `/proj/CDFuzzing/cluster/ssh/id_rsa` (and pubkey `.pub`)
+Drop-in installed at `/etc/ssh/cdfuzz_authorized_keys` + `/etc/ssh/sshd_config.d/90-cdfuzz.conf` on all workers.
+
+- Wisconsin workers: SSH via internal IPs `192.168.1.10–69` (uses cluster key via SSH config)
+- Utah workers: `ssh -i /proj/CDFuzzing/cluster/ssh/id_rsa <fuzzer>-N.eldarfin-309225.cdfuzzing-pg0.utah.cloudlab.us`
+
+### Recovering remaining dist11 reps (when NFS has space)
+
+Workers store data locally under `0/` regardless of rep. Use tar transform:
+```bash
+# For ip X with rep = (X-10)%5:
+ssh 192.168.1.X "tar -C /mydata/dist11/ar --transform='s|/0/|/REP/|;s|/0$|/REP|' \
+  --exclude='*/queue' --exclude='*/output' -cf - . 2>/dev/null" | \
+  tar -C /proj/CDFuzzing/distributed/dist11/ar/ -xf -
+```
 
 ### 10-Rep Results (correct Δbugs methodology)
 

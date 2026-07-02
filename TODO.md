@@ -1,14 +1,30 @@
 # TODO
 
-## Active
+## Active (2026-07-01 — experiment expiring)
 
-- [ ] **dist14: still running** — expected done ~June 29 18:00–18:30 CDT. Last batch containers started June 28 ~17:46; 24h timeout fires ~17:46 CDT today. Then analyze: honggfuzz KEEP_RECENT=50 vs 0 on Δbugs and Δcov.
+- [ ] **Analyze dist14** — honggfuzz KEEP_RECENT=50 vs baseline. Script: `analyze_dist14.py`. Data: `/mydata/dist14_ar.tar.gz` (130 MB) or `/proj/CDFuzzing/distributed/dist14/ar/` (partially deleted). Use `analyze_hfuzz_dist14.py` for paired 9-rep comparison.
+
+- [ ] **Analyze dist15 full paired comparison** — aflcd_v3 (C=5, CL=120) vs afl baseline. Script: `analyze_dist15.py`. Data: `/mydata/dist15_ar.tar.gz` (184 MB).
+
+- [ ] **SCP data archives to local machine** before experiment expires:
   ```bash
-  done=$(ls /proj/CDFuzzing/distributed/dist14/status/*.done 2>/dev/null | wc -l)
-  echo "dist14: $done/20 done"
+  scp eldarfin@pc536.emulab.net:/mydata/dist13_ar.tar.gz ~/cdfuzzing-data/
+  scp eldarfin@pc536.emulab.net:/mydata/dist14_ar.tar.gz ~/cdfuzzing-data/
+  scp eldarfin@pc536.emulab.net:/mydata/dist15_ar.tar.gz ~/cdfuzzing-data/
+  scp eldarfin@pc536.emulab.net:/mydata/hfuzz_paired_9rep.log ~/cdfuzzing-data/
+  scp eldarfin@pc536.emulab.net:/mydata/cdfuzzing_repo.zip ~/cdfuzzing-data/
+  scp eldarfin@pc536.emulab.net:/mydata/paper_repo.zip ~/cdfuzzing-data/
   ```
 
-- [ ] **Analyze dist14** — after all 20 workers done, run plot_seed4.py (or targeted script) comparing honggfuzz KEEP_RECENT=50 vs KEEP_RECENT=0.
+- [ ] **Recover remaining dist11 reps** (if NFS has space) — see HANDOFF.md for tar transform command. Rep 0 complete; reps 1–4 partial due to NFS space limit (80% full, 21 GB free).
+
+## Done (2026-07-01)
+
+- [x] **Data archived** — dist13 (428 MB), dist14 (130 MB), dist15 (184 MB) tarballs at `/mydata/`; repos zipped (cdfuzzing 141 MB, paper 1.2 MB).
+- [x] **SSH restored on all workers** — drop-in at `/etc/ssh/cdfuzz_authorized_keys` + `90-cdfuzz.conf` on 60 Wisconsin + 36 Utah workers. Head accesses Wisconsin via 192.168.1.x; Utah via public hostnames with cluster key.
+- [x] **dist11 rep 0 recovered to NFS** — full corpus-included transfer for rep 0 all 12 fuzzers. Partial reps 1–4 (space limited).
+- [x] **dist12 restored to NFS** — reps 5,6,7 (+ rep 0 from Utah worker local paths) at `/proj/CDFuzzing/distributed/dist12/ar/`.
+- [x] **dist14 complete** — 20/20 workers done; archived. Analysis still pending.
 
 ## Done (2026-06-29)
 
