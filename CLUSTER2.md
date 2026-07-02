@@ -19,6 +19,8 @@ Cluster 1 (Wisconsin) is documented in [CLOUDLAB.md](CLOUDLAB.md).
 | cdfuzz-role SHARED | `/proj/cdfuzzing-PG0` |
 | Manifest | `/proj/cdfuzzing-PG0/cluster/manifest.txt` |
 | Cluster SSH key | `/proj/cdfuzzing-PG0/cluster/ssh/id_rsa` |
+| Wisconsin head access | `ssh -i /proj/CDFuzzing/cluster/ssh/id_rsa <fuzzer>-N.eldarfin-309225.cdfuzzing-pg0.utah.cloudlab.us` |
+| Wisconsin cluster key installed | ✅ Drop-in at `/etc/ssh/cdfuzz_authorized_keys` + `90-cdfuzz.conf` on all 36 Utah workers (2026-07-01) |
 
 > **NFS naming note**: On Wisconsin, `/proj/cdfuzzing-PG0` is a *local* per-node directory
 > (not NFS) — the real NFS there is `/proj/CDFuzzing`. On Utah cluster2, `/proj/cdfuzzing-PG0`

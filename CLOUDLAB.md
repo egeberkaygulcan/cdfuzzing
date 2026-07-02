@@ -4,19 +4,12 @@ Reference for the distributed multi-node CD-Fuzzing campaign on CloudLab. This
 replaces the single-machine, sequential-batch workflow (seed_4) with one node
 per (fuzzer × repetition), dispatched and merged from a central head node.
 
-> Status (2026-06-22): **dist10 RUNNING — 60/60 workers active** (started 09:09 CDT).
-> Current cluster: Wisconsin, 61 nodes (head + 60 workers, `192.168.1.1` + `.10–.69`),
-> 12 fuzzers × 5 reps (all baselines + all CD variants). All workers at commit `4fa1146e`.
-> Shared NFS: `/proj/CDFuzzing` (100 GB, writable by all nodes). dist10 expected ~2026-06-23 09:30 CDT.
->
-> Known fixed issues: boot-time quoting bug (profile.py), Docker data-root overflow,
-> Emulab keymgmt SSH key wipe, `/proj/cdfuzzing-PG0` local-path bug (was not NFS;
-> real NFS is `/proj/CDFuzzing`; `nohup` SSH blocking, `.running` skip on relaunch
-> (moved to /mydata), NFS *.honggfuzz.cov quota (rsync exclude), silent rsync
-> failures, workers never git-pulled before dispatch (orchestrate.sh now does
-> `git checkout -- . && git pull --ff-only` on each worker before running),
-> **Emulab keymgmt wipes cluster SSH key** (setup-node.sh now writes cluster pubkey
-> to `/etc/ssh/cdfuzz_authorized_keys` + sshd drop-in, immune to Emulab key sync).
+> Status (2026-07-01): **EXPERIMENT EXPIRING** — Wisconsin cluster (eldarfin-309063), 61 nodes.
+> dist14 complete (honggfuzz KEEP_RECENT=50, 20 workers, archived to `/mydata/dist14_ar.tar.gz`).
+> NFS at ~80% full (21 GB free). dist11/dist12 raw data partially recovered from worker nodes.
+> Worker SSH restored via drop-in (`/etc/ssh/cdfuzz_authorized_keys` + `90-cdfuzz.conf`).
+> Workers accessible via 192.168.1.10–69 using cluster key at `/proj/CDFuzzing/cluster/ssh/id_rsa`.
+> **Important**: workers store local data under `0/` regardless of rep — use tar `--transform` to remap rep dirs when pulling.
 
 ## What it provisions
 

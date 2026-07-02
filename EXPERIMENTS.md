@@ -2,7 +2,7 @@
 
 ---
 
-## distributed (CloudLab): dist16 — aflfastcd_v3 vs aflfast, 3+ reps × 24h (PLANNED)
+## distributed (CloudLab): dist16 — aflfastcd_v3 vs aflfast, 3+ reps × 24h (PLANNED — blocked)
 
 Goal: Improve AFLFast with CD by tuning the trigger parameters. aflfastcd (C=3, CL=10) fires
 only in 1/10 reps on sqlite3 — the transient coverage bursts from AFLFast's exponential power
@@ -13,9 +13,8 @@ dist15 had 0 sqlite3 resets in 5 reps (CL=25 suppresses re-triggering too aggres
 counter; CL=10 (not 25) allows multiple resets per campaign, giving more chances to hit
 sqlite3-type stagnation.
 
-Status: **PLANNED** — Utah NFS quota exhausted by CloudLab images/VMs (29G out of 37G quota
-immovable). Utah workers' SSH broken (local home dir, not NFS-shared — keymgmt wipe is permanent).
-**Run on Wisconsin** using a new fresh cluster with `sharedDir=/proj/CDFuzzing`.
+Status: **BLOCKED — Wisconsin experiment expiring (2026-07-01)**. Launch after obtaining a new
+CloudLab allocation. Utah NFS quota exhausted; run on Wisconsin with `sharedDir=/proj/CDFuzzing`.
 
 Design:
 - Fuzzers: **aflfast** (baseline) + **aflfastcd_v3** (variant)
@@ -62,14 +61,13 @@ Analysis: adapt `analyze_dist15.py` with `DIST15_AR=/proj/CDFuzzing/distributed/
 
 ---
 
-## distributed (CloudLab): dist14 — honggfuzz + honggfuzzcd, 10 reps × 24h, soft reset (RUNNING/LIKELY COMPLETE)
+## distributed (CloudLab): dist14 — honggfuzz + honggfuzzcd, 10 reps × 24h, soft reset (COMPLETE)
 
 Goal: Validate new **AFL_DRIFT_KEEP_RECENT** soft reset for honggfuzzcd across 10 paired reps.
 dist11/12/13 used hard reset (KEEP_RECENT=0); this run tests KEEP_RECENT=50 to check whether
 retaining recent corpus discoveries eliminates the coverage cliff seen in dist3–dist9.
 
-Status: **RUNNING** — launched ~June 27 17:00 MDT, expected done ~June 27 18:30 MDT. Likely
-complete by June 29. Check: `ls /proj/CDFuzzing/distributed/dist14/status/*.done | wc -l` (expect 20).
+Status: **COMPLETE** — all 20 workers done. Archived to `/mydata/dist14_ar.tar.gz` (130 MB). Analysis pending.
 
 Design:
 - Fuzzers: honggfuzz (baseline) + honggfuzzcd (with soft reset)
@@ -108,9 +106,9 @@ bash orchestrate.sh --run-id dist14 --timeout 24h --fuzzers "honggfuzz honggfuzz
 ```
 
 Manifest: 21 entries (1 head + 10 honggfuzz workers + 10 honggfuzzcd workers).
-Results: `/proj/CDFuzzing/distributed/dist14/ar/`
+Results: `/mydata/dist14_ar.tar.gz` (130 MB). Original NFS path `/proj/CDFuzzing/distributed/dist14/ar/` partially deleted.
 
-Status: **PLANNED**
+Status: **COMPLETE + ARCHIVED — analysis pending**
 
 ---
 
